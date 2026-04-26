@@ -546,6 +546,48 @@ fn wait_for_server(url_host: &str, port: u16) -> Result<(), String> {
     ))
 }
 
+/// Portable-mode bootstrap: if a `.env` file lives next to the running .exe,
+/// load each `KEY=VALUE` line into the current process environment so spawned
+/// sidecars inherit it. This is what lets users drop the portable folder
+/// anywhere, edit `.env` in Notepad, and have the API keys take effect on the
+/// next launch — no installer, no AppData spelunking.
+///
+/// Quietly does nothing if `.env` is absent (which is the case for the
+/// installed-MSI build, where credentials live in ~/.claude/adapters.json).
+fn load_portable_env_file() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent() else { return };
+    let env_path = dir.join(".env");
+    let Ok(content) = std::fs::read_to_string(&env_path) else { return };
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(eq_idx) = line.find('=') else { continue };
+        let key = line[..eq_idx].trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut value = line[eq_idx + 1..].trim().to_string();
+        // Strip a single layer of matching quotes — common in dotenv files.
+        if value.len() >= 2 {
+            let bytes = value.as_bytes();
+            let first = bytes[0];
+            let last = bytes[bytes.len() - 1];
+            if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+                value = value[1..value.len() - 1].to_string();
+            }
+        }
+        // Don't clobber values the user explicitly set in the parent shell.
+        if std::env::var_os(key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+    println!("[desktop] loaded portable .env from {}", env_path.display());
+}
+
 fn resolve_app_root(_app: &AppHandle) -> Result<PathBuf, String> {
     // 历史用途：此前 sidecar launcher 用 dynamic file:// import 加载磁盘上
     // 的 src/server/index.ts 和 preload.ts，所以 Tauri 必须把整个 src/ +
@@ -672,6 +714,7 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
             &app_root_arg,
             "--feishu",
             "--telegram",
+            "--wechat",
         ]);
 
     let (mut rx, child) = sidecar
@@ -743,6 +786,8 @@ fn kill_windows_sidecars() {
         "claude-sidecar-x86_64-pc-windows-msvc.exe",
         "claude-sidecar-aarch64-pc-windows-msvc.exe",
         "claude-sidecar.exe",
+        "claude-haha-tui-x86_64-pc-windows-msvc.exe",
+        "claude-haha-tui.exe",
     ] {
         let _ = StdCommand::new("taskkill")
             .args(["/F", "/T", "/IM", image_name])
@@ -837,6 +882,10 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must run BEFORE Tauri builds — sidecars are spawned in `setup` and they
+    // read process.env at top-level, so injection has to happen first.
+    load_portable_env_file();
+
     let builder = tauri::Builder::default()
         .manage(ServerState::default())
         .manage(AdapterState::default())

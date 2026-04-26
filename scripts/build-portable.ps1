@@ -1,0 +1,201 @@
+[CmdletBinding()]
+param(
+  [switch]$SkipInstall,
+  [switch]$SkipZip
+)
+
+# ============================================================
+#  Portable Windows build orchestrator.
+#
+#  Produces a copy-and-run folder under  dist/portable/  containing:
+#    ClaudeHaha.exe                       — Tauri desktop window
+#    claude-sidecar.exe                   — bundled Bun runtime + server/adapters
+#    claude-haha-tui.exe                  — standalone terminal TUI
+#    .env.example                         — copy to .env and edit
+#    README-portable.txt                  — three-line usage note
+#
+#  Lifecycle:
+#    1. Double-click ClaudeHaha.exe → Tauri window opens
+#    2. Tauri loads .env from the folder, spawns claude-sidecar.exe children
+#    3. Closing the window kills every child (lib.rs RunEvent::Exit handler
+#       + Windows taskkill fallback)
+#
+#  Prerequisites: Bun, Rust, MSVC 2022 build tools (same as build-windows-x64.ps1).
+# ============================================================
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
+$desktopDir = Join-Path $repoRoot 'desktop'
+$targetTriple = 'x86_64-pc-windows-msvc'
+$portableDir = Join-Path $repoRoot 'dist\portable'
+$tauriTargetExe = Join-Path $desktopDir "src-tauri\target\$targetTriple\release\claude-code-desktop.exe"
+$binariesDir = Join-Path $desktopDir 'src-tauri\binaries'
+
+function Write-Step { param([string]$Message) Write-Host "[build-portable] $Message" }
+
+# Re-uses build-windows-x64.ps1's environment-setup helpers by dot-sourcing —
+# but build-windows-x64.ps1 also runs `tauri build --bundles msi` which we
+# don't want here. So we replicate the prereq checks inline and call tauri
+# directly with --bundles none.
+
+if ($env:OS -ne 'Windows_NT') { throw 'This script must run on Windows.' }
+foreach ($cmd in 'bun','cargo','rustc','bunx') {
+  if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+    throw "Missing required command: $cmd"
+  }
+}
+
+function Import-VsDevEnvironment {
+  $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+  if (-not (Test-Path $vswhere)) {
+    throw 'Could not find vswhere.exe. Install Visual Studio 2022 Build Tools (C++ workload).'
+  }
+  $installationPath = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+  if (-not $installationPath) { throw 'Missing Visual C++ build tools (VC.Tools.x86.x64).' }
+  $vsDevCmd = Join-Path $installationPath 'Common7\Tools\VsDevCmd.bat'
+  if (-not (Test-Path $vsDevCmd)) { throw "Could not find VsDevCmd.bat under $installationPath" }
+  Write-Step "Importing MSVC environment from $vsDevCmd"
+  $env:VSCMD_SKIP_SENDTELEMETRY = '1'
+  $envDump = & cmd.exe /d /s /c "`"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+  if ($LASTEXITCODE -ne 0) { throw "Failed to initialize VS build environment (exit $LASTEXITCODE)" }
+  foreach ($line in $envDump) {
+    if ($line -match '^(.*?)=(.*)$') {
+      [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+    }
+  }
+}
+
+Import-VsDevEnvironment
+
+if (-not $SkipInstall) {
+  # Some Bun-on-Windows builds (1.3.11–1.3.14 observed) panic on `bun install`
+  # with an internal assertion failure. We fall back to `npm install` in that
+  # case — npm is always available on a Bun host because Bun ships with one.
+  function Install-WithFallback {
+    param([string]$Dir, [string]$Label)
+    Push-Location $Dir
+    try {
+      & bun install
+      if ($LASTEXITCODE -eq 0) { return }
+      Write-Step "bun install failed in $Label (exit $LASTEXITCODE), falling back to npm install"
+      & npm install --no-audit --no-fund --loglevel=error
+      if ($LASTEXITCODE -ne 0) { throw "npm install also failed in $Label (exit $LASTEXITCODE)" }
+    } finally { Pop-Location }
+  }
+
+  Write-Step 'Installing root dependencies...'
+  Install-WithFallback -Dir $repoRoot -Label 'root'
+
+  Write-Step 'Installing desktop dependencies...'
+  Install-WithFallback -Dir $desktopDir -Label 'desktop'
+
+  $adaptersDir = Join-Path $repoRoot 'adapters'
+  if (Test-Path (Join-Path $adaptersDir 'package.json')) {
+    Write-Step 'Installing adapter dependencies...'
+    Install-WithFallback -Dir $adaptersDir -Label 'adapters'
+  }
+}
+
+# 1) Tauri build with --no-bundle — produces just the .exe + sidecars,
+#    no MSI / NSIS installer wrapping. (Tauri 2 doesn't accept "--bundles none";
+#    --no-bundle is the dedicated flag for "compile only, don't package".)
+#
+# The override config (disabling updater artifacts so we don't need a signing
+# key in this portable path) goes through a temp file because PowerShell's
+# native-command quoting eats inline JSON.
+$portableTauriCfg = Join-Path ([System.IO.Path]::GetTempPath()) 'cc-haha.tauri.portable.windows.json'
+@{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Path $portableTauriCfg -Encoding UTF8
+
+Write-Step "Building Tauri Desktop (--no-bundle, no MSI/NSIS)"
+Push-Location $desktopDir
+try {
+  $env:TAURI_ENV_TARGET_TRIPLE = $targetTriple
+  & bunx tauri build --target $targetTriple --no-bundle --ci --config $portableTauriCfg
+  if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE)" }
+} finally {
+  Pop-Location
+  if (Test-Path $portableTauriCfg) { Remove-Item -LiteralPath $portableTauriCfg -Force }
+}
+
+if (-not (Test-Path $tauriTargetExe)) {
+  throw "Expected Tauri exe not found at $tauriTargetExe"
+}
+
+# 2) Stage the portable folder.
+Write-Step "Staging portable folder at $portableDir"
+if (Test-Path $portableDir) { Remove-Item -LiteralPath $portableDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+
+Copy-Item -LiteralPath $tauriTargetExe -Destination (Join-Path $portableDir 'ClaudeHaha.exe')
+
+# Sidecars produced by build-sidecars.ts (run as part of beforeBuildCommand).
+$sidecarSrc = Join-Path $binariesDir "claude-sidecar-$targetTriple.exe"
+$tuiSrc = Join-Path $binariesDir "claude-haha-tui-$targetTriple.exe"
+if (-not (Test-Path $sidecarSrc)) { throw "claude-sidecar binary missing: $sidecarSrc" }
+if (-not (Test-Path $tuiSrc)) { throw "claude-haha-tui binary missing: $tuiSrc" }
+
+# Tauri requires the sidecar filename to match the target-triple form for the
+# externalBin lookup in lib.rs. We keep that name AND drop a friendlier alias
+# so users running from a console see `claude-sidecar.exe` / `claude-haha-tui.exe`.
+Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir "claude-sidecar-$targetTriple.exe")
+Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir 'claude-sidecar.exe')
+Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir "claude-haha-tui-$targetTriple.exe")
+Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'claude-haha-tui.exe')
+
+Copy-Item -LiteralPath (Join-Path $repoRoot '.env.example') -Destination (Join-Path $portableDir '.env.example')
+
+$readme = @'
+Claude Code Haha - Portable Windows Build
+=========================================
+
+Usage:
+  1. Copy this entire folder anywhere you want.
+  2. Open .env.example in Notepad, fill in your API keys / model,
+     and Save As ".env" (no .txt suffix).
+  3. Double-click ClaudeHaha.exe to launch the desktop UI.
+     - Or run claude-haha-tui.exe from a terminal for the text UI.
+     - Closing the window kills every spawned child process automatically.
+
+DO NOT double-click claude-sidecar.exe - it is an internal helper that
+ClaudeHaha.exe spawns automatically. Running it directly will print a
+"missing mode argument" message and exit; that is by design.
+
+Optional WeChat IM setup:
+  This is the only situation where you run claude-sidecar.exe yourself.
+  Open a terminal in this folder and run:
+      claude-sidecar.exe wechat-login
+  Scan the QR code (saved to %USERPROFILE%\.claude\wechat-qr.png),
+  confirm in WeChat, then restart ClaudeHaha.exe - the WeChat adapter
+  will pick up the new account.
+
+Files:
+  ClaudeHaha.exe                Desktop window     (USER - double-click this)
+  claude-haha-tui.exe           Terminal UI        (USER - run from a terminal)
+  claude-sidecar.exe            Server + adapters  (INTERNAL - do not run)
+  claude-sidecar-x86_64-...exe  Target-triple alias Tauri''s externalBin needs
+  claude-haha-tui-x86_64-...exe Target-triple alias for the TUI
+  .env.example                  Template - copy to .env and edit
+
+WebView2:
+  ClaudeHaha.exe needs Microsoft Edge WebView2. Pre-installed on Windows 11
+  and most updated Windows 10 systems. If launching shows a "WebView2
+  missing" dialog, install the Evergreen Bootstrapper from
+      https://developer.microsoft.com/microsoft-edge/webview2/
+'@
+Set-Content -LiteralPath (Join-Path $portableDir 'README-portable.txt') -Value $readme -Encoding UTF8
+
+# 3) Optional zip.
+if (-not $SkipZip) {
+  $version = (Get-Content -LiteralPath (Join-Path $desktopDir 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+  $zipPath = Join-Path $repoRoot "dist\ClaudeHaha-Portable-v$version.zip"
+  if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+  Write-Step "Zipping to $zipPath"
+  Compress-Archive -Path (Join-Path $portableDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+  Write-Step "Done. Portable folder: $portableDir"
+  Write-Step "Done. Zip:             $zipPath"
+} else {
+  Write-Step "Done. Portable folder: $portableDir (zip skipped)"
+}

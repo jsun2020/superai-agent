@@ -1,8 +1,13 @@
 import path from 'node:path'
 
-export type SidecarMode = 'server' | 'cli' | 'adapters'
+export type SidecarMode = 'server' | 'cli' | 'adapters' | 'wechat-login'
 
-const EXPLICIT_MODES = new Set<SidecarMode>(['server', 'cli', 'adapters'])
+const EXPLICIT_MODES = new Set<SidecarMode>([
+  'server',
+  'cli',
+  'adapters',
+  'wechat-login',
+])
 const DESKTOP_CLI_NAMES = new Set(['claude-haha', 'claude-haha.exe'])
 
 export function resolveSidecarInvocation(

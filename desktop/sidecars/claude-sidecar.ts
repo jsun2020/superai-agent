@@ -6,9 +6,10 @@
  * 把所有运行模式合并到同一个二进制里，runtime 只保留一份；调用方通过
  * 第一个 positional 参数选择模式：
  *
- *   claude-sidecar server   --app-root <path> --host 127.0.0.1 --port 12345
- *   claude-sidecar cli      --app-root <path> [其它 CLI 参数...]
- *   claude-sidecar adapters --app-root <path> [--feishu] [--telegram]
+ *   claude-sidecar server       --app-root <path> --host 127.0.0.1 --port 12345
+ *   claude-sidecar cli          --app-root <path> [其它 CLI 参数...]
+ *   claude-sidecar adapters     --app-root <path> [--feishu] [--telegram] [--wechat]
+ *   claude-sidecar wechat-login                  # 一次性扫码登录
  *
  * 任何模式都必须先做 process.env / process.argv 设置，再 await 进入相应的
  * 子模块树。原因：src/server/index.ts、src/entrypoints/cli.tsx、以及
@@ -22,7 +23,25 @@ import { parseLauncherArgs, resolveSidecarInvocation } from './launcherRouting'
 const rawArgs = process.argv.slice(2)
 const invocation = resolveSidecarInvocation(rawArgs)
 if (!invocation.mode) {
-  console.error('claude-sidecar: missing mode argument (expected "server", "cli" or "adapters")')
+  // Friendly help text for users who double-click this binary directly.
+  // claude-sidecar.exe is an internal helper that ClaudeHaha.exe spawns as
+  // a child process with a mode argument. Without that arg it has no work
+  // to do — but a raw "missing mode" error makes it look like a crash.
+  console.error('')
+  console.error('claude-sidecar.exe is an internal helper, not meant to run directly.')
+  console.error('')
+  console.error('  • Double-click ClaudeHaha.exe          — desktop window (recommended)')
+  console.error('  • Run claude-haha-tui.exe              — terminal UI version')
+  console.error('  • Run claude-sidecar.exe wechat-login  — only direct use: scan WeChat QR')
+  console.error('')
+  console.error(
+    'Internal modes (used by ClaudeHaha.exe): server, cli, adapters, wechat-login.',
+  )
+  console.error('')
+  // 5-second pause so a user who double-clicked can read the message before
+  // the console window closes. No-op when run from an existing terminal.
+  const sleep = Number(process.env.CLAUDE_SIDECAR_HELP_PAUSE_MS ?? 5000)
+  if (sleep > 0) await new Promise((r) => setTimeout(r, sleep))
   process.exit(2)
 }
 const mode = invocation.mode
@@ -30,6 +49,11 @@ const restArgs = invocation.restArgs
 
 if (mode === 'adapters') {
   await runAdapters(restArgs)
+} else if (mode === 'wechat-login') {
+  // 一次性扫码登录 —— 不需要 --app-root，沿用 adapters/wechat/login.ts 顶层逻辑。
+  process.env.CALLER_DIR ||= process.cwd()
+  await import('../../preload.ts')
+  await import('../../adapters/wechat/login.ts')
 } else {
   const { appRoot, args } = parseLauncherArgs(restArgs, invocation.defaultAppRoot)
 
@@ -45,7 +69,9 @@ if (mode === 'adapters') {
   } else if (mode === 'cli') {
     await import('../../src/entrypoints/cli.tsx')
   } else {
-    console.error(`claude-sidecar: unknown mode "${mode}" (expected "server", "cli" or "adapters")`)
+    console.error(
+      `claude-sidecar: unknown mode "${mode}" (expected "server", "cli", "adapters", or "wechat-login")`,
+    )
     process.exit(2)
   }
 }
@@ -57,6 +83,7 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   let appRoot: string | null = process.env.CLAUDE_APP_ROOT ?? null
   let enableFeishu = false
   let enableTelegram = false
+  let enableWechat = false
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
@@ -73,12 +100,16 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
       enableTelegram = true
       continue
     }
+    if (arg === '--wechat') {
+      enableWechat = true
+      continue
+    }
     console.warn(`claude-sidecar adapters: ignoring unknown arg "${arg}"`)
   }
 
-  if (!enableFeishu && !enableTelegram) {
+  if (!enableFeishu && !enableTelegram && !enableWechat) {
     console.error(
-      'claude-sidecar adapters: must enable at least one of --feishu / --telegram',
+      'claude-sidecar adapters: must enable at least one of --feishu / --telegram / --wechat',
     )
     process.exit(2)
   }
@@ -121,6 +152,23 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
       console.log('[claude-sidecar] starting Telegram adapter')
       // 副作用 import：telegram/index.ts 顶层会自动 bot.start()
       await import('../../adapters/telegram/index.ts')
+      started += 1
+    }
+  }
+
+  if (enableWechat) {
+    // wechat 没有 env-only 凭据 —— 凭据是 ~/.claude/wechat-accounts/<id>.json，
+    // 由 `claude-sidecar wechat-login` 一次性扫码生成。这里只检查是否存在
+    // 任意账号；缺账号就 warn + skip，跟 feishu / telegram 缺凭据时同等处理。
+    const { listAccounts } = await import('../../adapters/wechat/account-store.ts')
+    const accounts = listAccounts()
+    if (accounts.length === 0) {
+      console.warn(
+        '[claude-sidecar] --wechat requested but no account found under ~/.claude/wechat-accounts/. Run `claude-sidecar wechat-login` first — skipping',
+      )
+    } else {
+      console.log('[claude-sidecar] starting Wechat adapter')
+      await import('../../adapters/wechat/index.ts')
       started += 1
     }
   }
