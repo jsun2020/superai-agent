@@ -1,15 +1,16 @@
 /**
  * Low-level HTTP client for the ilink-bot WeChat API.
  *
- * Endpoint paths and request shapes mirror what the official Tencent
- * `@tencent-weixin/openclaw-weixin-cli` plugin speaks. References:
- *   - https://github.com/FFengIll/understand-tencent-weixin-openclaw-weixin
+ * Endpoint paths, headers, and request shapes mirror what the official
+ * Tencent `@tencent-weixin/openclaw-weixin@2.1.x` plugin sends on the wire.
+ * The published source under `src/api/api.ts` and `src/auth/login-qr.ts`
+ * (downloaded from npm) was used as the canonical reference.
  *
- * All endpoints are kept as named constants at the top of the file so that
- * if Tencent ever ships a path change in a new plugin release, fixing it is
- * a one-line edit.
+ * All endpoint paths are kept as named constants at the top of the file so
+ * that if Tencent ever ships a path change in a new plugin release, fixing it
+ * is a one-line edit.
  *
- * This client deliberately does NOT depend on @tencent-weixin/openclaw-weixin-cli
+ * This client deliberately does NOT depend on @tencent-weixin/openclaw-weixin
  * — that package targets the OpenClaw runtime, not cc-haha. We re-implement
  * the wire protocol so the adapter integrates with Desktop Webapp's IM 接入
  * pairing flow (see adapters/README.md) just like Telegram and Feishu do.
@@ -19,13 +20,42 @@ import { randomWechatUin } from './crypto.js'
 
 export const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com'
 
+/** iLink-App-Id sent in every request. The upstream package.json sets this
+ *  to "bot" and the server gates on it — without the header we get HTTP 404
+ *  on QR endpoints (verified against ilinkai.weixin.qq.com on 2026-04-27). */
+export const ILINK_APP_ID = 'bot'
+
+/** Channel version reported in headers + body.base_info. We mirror the
+ *  upstream plugin's released version so the server treats us as a known
+ *  client; the value itself doesn't gate access today, but tracking the
+ *  upstream avoids drift if Tencent ever min-version checks. */
+export const CHANNEL_VERSION = '2.1.10'
+
+/** iLink-App-ClientVersion: uint32 encoded as 0x00MMNNPP from semver.
+ *  e.g. "2.1.10" -> (2<<16) | (1<<8) | 10 = 131338. */
+function encodeClientVersion(version: string): number {
+  const parts = version.split('.').map((p) => parseInt(p, 10))
+  const [major = 0, minor = 0, patch = 0] = parts
+  return ((major & 0xff) << 16) | ((minor & 0xff) << 8) | (patch & 0xff)
+}
+
+export const ILINK_APP_CLIENT_VERSION = encodeClientVersion(CHANNEL_VERSION)
+
+/** Default `bot_type` query parameter for get_bot_qrcode / get_qrcode_status. */
+export const DEFAULT_BOT_TYPE = '3'
+
 export const WX_ENDPOINTS = {
-  qrcode: '/ilink/bot/getqrcode',
-  qrstatus: '/ilink/bot/getqrcodestatus',
-  getUpdates: '/ilink/bot/getupdates',
-  sendMessage: '/ilink/bot/sendmessage',
-  getUploadUrl: '/ilink/bot/getuploadurl',
-  getConfig: '/ilink/bot/getconfig',
+  // GET endpoints (query-parameter based, no body)
+  qrcode: 'ilink/bot/get_bot_qrcode',
+  qrstatus: 'ilink/bot/get_qrcode_status',
+  // POST endpoints (JSON body with base_info)
+  getUpdates: 'ilink/bot/getupdates',
+  sendMessage: 'ilink/bot/sendmessage',
+  sendTyping: 'ilink/bot/sendtyping',
+  getUploadUrl: 'ilink/bot/getuploadurl',
+  getConfig: 'ilink/bot/getconfig',
+  notifyStop: 'ilink/bot/msg/notifystop',
+  notifyStart: 'ilink/bot/msg/notifystart',
 } as const
 
 export const WX_ITEM_TYPE = {
@@ -44,6 +74,10 @@ export type SendItem =
   | { type: 2; image_item: { filekey: string; aeskey: string } }
   | { type: 4; file_item: { filekey: string; aeskey?: string; filename?: string } }
   | { type: 5; video_item: { filekey: string; thumbkey?: string; aeskey?: string } }
+
+export interface BaseInfo {
+  channel_version: string
+}
 
 export interface SendMessageRequest {
   to_user_id: string
@@ -91,24 +125,30 @@ export interface UploadUrlResponse {
   upload_method?: 'PUT' | 'POST'
 }
 
+/** Response from get_bot_qrcode. The upstream plugin does NOT report a `ret`
+ *  field on this endpoint — success is implied by HTTP 200 + presence of
+ *  qrcode_img_content. The img_content is a URL/text payload that the client
+ *  is expected to QR-encode locally; scanning the resulting QR with WeChat
+ *  drives the auth flow. */
 export interface QrCodeResponse {
-  ret: number
-  errcode?: number
-  errmsg?: string
   qrcode?: string
   qrcode_img_content?: string
-  expires_in?: number
-}
-
-export interface QrStatusResponse {
-  ret: number
+  /** Only present on protocol-level errors. */
   errcode?: number
   errmsg?: string
-  status?: 'wait' | 'scaned' | 'confirmed' | 'expired'
+}
+
+/** Response from get_qrcode_status long-poll. */
+export interface QrStatusResponse {
+  status?: 'wait' | 'scaned' | 'confirmed' | 'expired' | 'scaned_but_redirect'
   bot_token?: string
   ilink_bot_id?: string
   ilink_user_id?: string
   baseurl?: string
+  /** New host to redirect polling to when status === 'scaned_but_redirect'. */
+  redirect_host?: string
+  errcode?: number
+  errmsg?: string
 }
 
 export class WeixinClient {
@@ -119,8 +159,19 @@ export class WeixinClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
-  private headers(): Record<string, string> {
+  /** Headers shared by every request (GET + POST). */
+  private commonHeaders(): Record<string, string> {
+    return {
+      'iLink-App-Id': ILINK_APP_ID,
+      'iLink-App-ClientVersion': String(ILINK_APP_CLIENT_VERSION),
+    }
+  }
+
+  /** Headers for POST requests — adds Content-Type, X-WECHAT-UIN, and the
+   *  Bearer token when authenticated. */
+  private postHeaders(): Record<string, string> {
     const h: Record<string, string> = {
+      ...this.commonHeaders(),
       'Content-Type': 'application/json',
       'X-WECHAT-UIN': randomWechatUin(),
     }
@@ -131,34 +182,70 @@ export class WeixinClient {
     return h
   }
 
-  /** POST a JSON body and parse the JSON reply. Throws on transport
-   *  failures and on non-2xx HTTP codes; protocol errors (errcode) are
-   *  returned in the response object for the caller to inspect. */
-  async post<T>(endpoint: string, body: unknown, timeoutMs = 15_000): Promise<T> {
+  private joinUrl(endpoint: string): string {
+    // Endpoints in WX_ENDPOINTS are stored without leading slash so URL()
+    // can resolve them relative to baseUrl + '/'.
+    return `${this.baseUrl}/${endpoint.replace(/^\/+/, '')}`
+  }
+
+  /** GET request returning the parsed JSON body. Used for the QR-code login
+   *  endpoints which are query-parameter based and have no JSON request
+   *  body. */
+  async get<T>(endpoint: string, query: Record<string, string> = {}, timeoutMs = 40_000): Promise<T> {
+    const url = new URL(this.joinUrl(endpoint))
+    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v)
+
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
-      const resp = await fetch(this.baseUrl + endpoint, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(body ?? {}),
+      const resp = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.commonHeaders(),
         signal: ctrl.signal,
       })
+      const text = await resp.text()
       if (!resp.ok) {
-        throw new Error(`[Wechat] ${endpoint} -> HTTP ${resp.status}`)
+        throw new Error(`[Wechat] ${endpoint} -> HTTP ${resp.status}: ${text.slice(0, 200)}`)
       }
-      return (await resp.json()) as T
+      return JSON.parse(text) as T
     } finally {
       clearTimeout(timer)
     }
   }
 
-  async getQrCode(): Promise<QrCodeResponse> {
-    return this.post<QrCodeResponse>(WX_ENDPOINTS.qrcode, {})
+  /** POST a JSON body and parse the JSON reply. The body is auto-wrapped
+   *  with `base_info` (channel_version) which the server expects on every
+   *  authenticated POST. */
+  async post<T>(endpoint: string, body: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
+    const wrappedBody = { ...body, base_info: { channel_version: CHANNEL_VERSION } as BaseInfo }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const resp = await fetch(this.joinUrl(endpoint), {
+        method: 'POST',
+        headers: this.postHeaders(),
+        body: JSON.stringify(wrappedBody),
+        signal: ctrl.signal,
+      })
+      const text = await resp.text()
+      if (!resp.ok) {
+        throw new Error(`[Wechat] ${endpoint} -> HTTP ${resp.status}: ${text.slice(0, 200)}`)
+      }
+      return JSON.parse(text) as T
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async getQrCode(botType: string = DEFAULT_BOT_TYPE): Promise<QrCodeResponse> {
+    return this.get<QrCodeResponse>(WX_ENDPOINTS.qrcode, { bot_type: botType })
   }
 
   async getQrCodeStatus(qrcode: string): Promise<QrStatusResponse> {
-    return this.post<QrStatusResponse>(WX_ENDPOINTS.qrstatus, { qrcode }, 40_000)
+    // The status endpoint is long-poll: server holds the connection up to
+    // ~35s before returning. Give the client a slightly bigger budget so
+    // we don't abort first.
+    return this.get<QrStatusResponse>(WX_ENDPOINTS.qrstatus, { qrcode }, 40_000)
   }
 
   /** Long-poll for new messages. The server uses `get_updates_buf` as an
@@ -172,7 +259,7 @@ export class WeixinClient {
   }
 
   async sendMessage(req: SendMessageRequest): Promise<{ ret: number; errcode?: number; errmsg?: string }> {
-    return this.post(WX_ENDPOINTS.sendMessage, req)
+    return this.post(WX_ENDPOINTS.sendMessage, req as unknown as Record<string, unknown>)
   }
 
   async getUploadUrl(params: {
