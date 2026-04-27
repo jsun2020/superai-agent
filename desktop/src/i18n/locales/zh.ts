@@ -144,7 +144,7 @@ export const zh: Record<TranslationKey, string> = {
 
   // Settings > Adapters
   'settings.tab.adapters': 'IM 接入',
-  'settings.adapters.description': '配置即时通讯适配器，通过 Telegram 或飞书与 Claude Code 对话。',
+  'settings.adapters.description': '配置即时通讯适配器，通过 Telegram、飞书或微信与 Claude Code 对话。',
   'settings.adapters.telegram': 'Telegram',
   'settings.adapters.feishu': '飞书 (Feishu)',
   'settings.adapters.botToken': 'Bot Token',
@@ -185,6 +185,15 @@ export const zh: Record<TranslationKey, string> = {
   'settings.adapters.unbindConfirm': '确定要解绑该用户吗？解绑后需重新配对才能使用。',
   'settings.adapters.platform.telegram': 'Telegram',
   'settings.adapters.platform.feishu': '飞书',
+  'settings.adapters.platform.wechat': '微信',
+  'settings.adapters.wechat': '微信 (WeChat)',
+  'settings.adapters.wechatLoginTitle': '微信扫码登录',
+  'settings.adapters.wechatLoginHint':
+    '微信不需要 API 密钥。在安装目录下打开终端，运行：claude-sidecar.exe wechat-login，使用微信扫码并在手机上确认，然后重启应用。',
+  'settings.adapters.wechatNoAccount': '尚未配置微信账号。',
+  'settings.adapters.wechatAccountId': '当前账号 ID',
+  'settings.adapters.wechatAccountIdPlaceholder': '留空则使用找到的第一个账号',
+  'settings.adapters.wxAllowedUsersPlaceholder': '如 wxid_xxx, wxid_yyy',
 
   // Settings > MCP
   'settings.mcp.title': 'MCP 服务',

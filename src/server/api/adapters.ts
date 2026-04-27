@@ -8,7 +8,7 @@
 import { adapterService } from '../services/adapterService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 
-const ALLOWED_TOP_KEYS = new Set(['serverUrl', 'defaultProjectDir', 'telegram', 'feishu', 'pairing'])
+const ALLOWED_TOP_KEYS = new Set(['serverUrl', 'defaultProjectDir', 'telegram', 'feishu', 'wechat', 'pairing'])
 
 export async function handleAdaptersApi(
   req: Request,

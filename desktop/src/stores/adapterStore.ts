@@ -48,7 +48,7 @@ type AdapterStore = {
   fetchConfig: () => Promise<void>
   updateConfig: (patch: Partial<AdapterFileConfig>) => Promise<void>
   generatePairingCode: () => Promise<string>
-  removePairedUser: (platform: 'telegram' | 'feishu', userId: string | number) => Promise<void>
+  removePairedUser: (platform: 'telegram' | 'feishu' | 'wechat', userId: string | number) => Promise<void>
 }
 
 export const useAdapterStore = create<AdapterStore>((set, get) => ({

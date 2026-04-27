@@ -30,4 +30,11 @@ export type AdapterFileConfig = {
     defaultWorkDir?: string
     streamingCard?: boolean
   }
+  wechat?: {
+    accountId?: string
+    longPollTimeoutMs?: number
+    allowedUsers?: string[]
+    pairedUsers?: PairedUser[]
+    defaultWorkDir?: string
+  }
 }

@@ -6,7 +6,7 @@ import { Button } from '../components/shared/Button'
 import { DirectoryPicker } from '../components/shared/DirectoryPicker'
 import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 
-type ImTab = 'feishu' | 'telegram'
+type ImTab = 'feishu' | 'telegram' | 'wechat'
 
 export function AdapterSettings() {
   const t = useTranslation()
@@ -31,6 +31,11 @@ export function AdapterSettings() {
   const [fsAllowedUsers, setFsAllowedUsers] = useState('')
   const [fsStreamingCard, setFsStreamingCard] = useState(false)
 
+  // WeChat —— 凭据是 ~/.claude/wechat-accounts/<id>.json（通过扫码登录生成），
+  // 不在这里编辑。UI 只暴露 allowedUsers 和可选的 accountId（多账号时切换）。
+  const [wxAccountId, setWxAccountId] = useState('')
+  const [wxAllowedUsers, setWxAllowedUsers] = useState('')
+
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState('')
@@ -38,7 +43,7 @@ export function AdapterSettings() {
   // Pairing
   const [pairingCode, setPairingCode] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [pendingUnbind, setPendingUnbind] = useState<{ platform: 'telegram' | 'feishu'; userId: string | number } | null>(null)
+  const [pendingUnbind, setPendingUnbind] = useState<{ platform: 'telegram' | 'feishu' | 'wechat'; userId: string | number } | null>(null)
   const [isUnbinding, setIsUnbinding] = useState(false)
 
   useEffect(() => {
@@ -56,6 +61,8 @@ export function AdapterSettings() {
     setFsVerificationToken(config.feishu?.verificationToken ?? '')
     setFsAllowedUsers(config.feishu?.allowedUsers?.join(', ') ?? '')
     setFsStreamingCard(config.feishu?.streamingCard ?? false)
+    setWxAccountId(config.wechat?.accountId ?? '')
+    setWxAllowedUsers(config.wechat?.allowedUsers?.join(', ') ?? '')
   }, [config])
 
   async function handleSave() {
@@ -93,6 +100,16 @@ export function AdapterSettings() {
         streamingCard: fsStreamingCard,
       }
 
+      const wxUsers = wxAllowedUsers
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      patch.wechat = {
+        accountId: wxAccountId || undefined,
+        allowedUsers: wxUsers.length ? wxUsers : [],
+      }
+
       await updateConfig(patch)
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
@@ -116,7 +133,7 @@ export function AdapterSettings() {
     }
   }, [generatePairingCode])
 
-  const handleUnbind = useCallback(async (platform: 'telegram' | 'feishu', userId: string | number) => {
+  const handleUnbind = useCallback(async (platform: 'telegram' | 'feishu' | 'wechat', userId: string | number) => {
     setPendingUnbind({ platform, userId })
   }, [])
 
@@ -136,6 +153,7 @@ export function AdapterSettings() {
   const allPairedUsers = [
     ...(config.telegram?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'telegram' as const })),
     ...(config.feishu?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'feishu' as const })),
+    ...(config.wechat?.pairedUsers ?? []).map((u) => ({ ...u, platform: 'wechat' as const })),
   ]
 
   // Check pairing expiry
@@ -258,6 +276,11 @@ export function AdapterSettings() {
             active={activeIm === 'telegram'}
             onClick={() => setActiveIm('telegram')}
           />
+          <ImTabButton
+            label={t('settings.adapters.wechat')}
+            active={activeIm === 'wechat'}
+            onClick={() => setActiveIm('wechat')}
+          />
         </div>
 
         {activeIm === 'feishu' && (
@@ -332,6 +355,42 @@ export function AdapterSettings() {
                 value={tgAllowedUsers}
                 onChange={(e) => setTgAllowedUsers(e.target.value)}
                 placeholder={t('settings.adapters.tgAllowedUsersPlaceholder')}
+              />
+              <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.adapters.allowedUsersHint')}</p>
+            </div>
+          </div>
+        )}
+
+        {activeIm === 'wechat' && (
+          <div className="p-4 space-y-4">
+            {/* WeChat 凭据来自 ~/.claude/wechat-accounts/<id>.json，由
+                `claude-sidecar.exe wechat-login` 一次性扫码生成。这里只展示登录提示
+                和可选的 accountId / allowedUsers。 */}
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-hover)] p-3">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)] mt-0.5">qr_code_2</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                    {t('settings.adapters.wechatLoginTitle')}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    {t('settings.adapters.wechatLoginHint')}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <Input
+              label={t('settings.adapters.wechatAccountId')}
+              value={wxAccountId}
+              onChange={(e) => setWxAccountId(e.target.value)}
+              placeholder={t('settings.adapters.wechatAccountIdPlaceholder')}
+            />
+            <div className="flex flex-col gap-1">
+              <Input
+                label={t('settings.adapters.allowedUsers')}
+                value={wxAllowedUsers}
+                onChange={(e) => setWxAllowedUsers(e.target.value)}
+                placeholder={t('settings.adapters.wxAllowedUsersPlaceholder')}
               />
               <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.adapters.allowedUsersHint')}</p>
             </div>

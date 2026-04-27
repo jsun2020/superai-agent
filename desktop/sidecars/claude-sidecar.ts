@@ -27,22 +27,26 @@ if (!invocation.mode) {
   // claude-sidecar.exe is an internal helper that ClaudeHaha.exe spawns as
   // a child process with a mode argument. Without that arg it has no work
   // to do — but a raw "missing mode" error makes it look like a crash.
-  console.error('')
-  console.error('claude-sidecar.exe is an internal helper, not meant to run directly.')
-  console.error('')
-  console.error('  • Double-click ClaudeHaha.exe          — desktop window (recommended)')
-  console.error('  • Run claude-haha-tui.exe              — terminal UI version')
-  console.error('  • Run claude-sidecar.exe wechat-login  — only direct use: scan WeChat QR')
-  console.error('')
-  console.error(
+  //
+  // Use stdout (console.log), not stderr: Windows conhost renders stderr
+  // text in red, which makes the friendly message look like a fatal error
+  // even though it isn't.
+  console.log('')
+  console.log('claude-sidecar.exe is an internal helper, not meant to run directly.')
+  console.log('')
+  console.log('  - Double-click ClaudeHaha.exe          : desktop window (recommended)')
+  console.log('  - Run claude-haha-tui.exe              : terminal UI version')
+  console.log('  - Run claude-sidecar.exe wechat-login  : only direct use - scan WeChat QR')
+  console.log('')
+  console.log(
     'Internal modes (used by ClaudeHaha.exe): server, cli, adapters, wechat-login.',
   )
-  console.error('')
+  console.log('')
   // 5-second pause so a user who double-clicked can read the message before
   // the console window closes. No-op when run from an existing terminal.
   const sleep = Number(process.env.CLAUDE_SIDECAR_HELP_PAUSE_MS ?? 5000)
   if (sleep > 0) await new Promise((r) => setTimeout(r, sleep))
-  process.exit(2)
+  process.exit(0)
 }
 const mode = invocation.mode
 const restArgs = invocation.restArgs

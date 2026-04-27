@@ -142,7 +142,7 @@ export const en = {
 
   // Settings > Adapters
   'settings.tab.adapters': 'IM Adapters',
-  'settings.adapters.description': 'Configure IM adapters to chat with Claude Code via Telegram or Feishu.',
+  'settings.adapters.description': 'Configure IM adapters to chat with Claude Code via Telegram, Feishu, or WeChat.',
   'settings.adapters.telegram': 'Telegram',
   'settings.adapters.feishu': 'Feishu',
   'settings.adapters.botToken': 'Bot Token',
@@ -183,6 +183,15 @@ export const en = {
   'settings.adapters.unbindConfirm': 'Are you sure you want to unbind this user? They will need to re-pair to use the bot.',
   'settings.adapters.platform.telegram': 'Telegram',
   'settings.adapters.platform.feishu': 'Feishu',
+  'settings.adapters.platform.wechat': 'WeChat',
+  'settings.adapters.wechat': 'WeChat',
+  'settings.adapters.wechatLoginTitle': 'WeChat login (QR scan)',
+  'settings.adapters.wechatLoginHint':
+    'WeChat does not use API keys. Open a terminal in the install folder and run: claude-sidecar.exe wechat-login. Scan the QR with WeChat, confirm on your phone, then restart the app.',
+  'settings.adapters.wechatNoAccount': 'No WeChat account configured yet.',
+  'settings.adapters.wechatAccountId': 'Active account ID',
+  'settings.adapters.wechatAccountIdPlaceholder': 'Leave empty to use the first account found',
+  'settings.adapters.wxAllowedUsersPlaceholder': 'e.g. wxid_xxx, wxid_yyy',
 
   // Settings > MCP
   'settings.mcp.title': 'MCP servers',
