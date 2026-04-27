@@ -1130,10 +1130,16 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
     model = baseModel ? (modelContext ? `${baseModel}:${modelContext}` : baseModel) : undefined
   }
 
+  // Pass providerId explicitly so adapter-created sessions (Telegram, Feishu,
+  // WeChat) get the same provider env injection as desktop chat. Without this
+  // the conversationService receives providerId=undefined, which strips the
+  // parent ANTHROPIC_* env without injecting a replacement — leaving the CLI
+  // subprocess with no credentials and the upstream LLM proxy returning 401.
   return {
     permissionMode: await settingsService.getPermissionMode().catch(() => undefined),
     model,
     effort,
+    providerId: activeId ?? null,
   }
 }
 
