@@ -643,7 +643,11 @@ async function pollLoop(): Promise<void> {
     }
     try {
       const resp = await client.getUpdates(cursor, timeoutMs)
-      if (resp.ret !== 0) {
+      // Tencent's getUpdates only returns `ret` / `errcode` on error. A
+      // successful long-poll response has neither field — just msgs and
+      // get_updates_buf. So treat null/undefined ret as success; only the
+      // explicit non-zero values are protocol failures.
+      if (resp.ret != null && resp.ret !== 0) {
         if (resp.errcode === WX_ERR_TOKEN_EXPIRED) {
           enterTokenExpiredPause()
           continue

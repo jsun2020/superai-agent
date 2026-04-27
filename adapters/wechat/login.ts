@@ -125,7 +125,7 @@ async function main(): Promise<void> {
         }
         saveAccount(account)
         console.log(`[Wechat-Login] Saved account ${status.ilink_bot_id}`)
-        console.log('[Wechat-Login] Done. Now run: bun run wechat')
+        console.log('[Wechat-Login] Done. Restart ClaudeHaha.exe (or `bun run wechat` from source) so the WeChat adapter picks up the new account.')
         return
       }
 

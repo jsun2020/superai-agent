@@ -15,7 +15,7 @@
 import * as path from 'node:path'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import type { LocalAttachment } from '../common/attachment/attachment-types.js'
-import { WX_ITEM_TYPE, type WeixinClient, type SendItem } from './client.js'
+import { WX_ITEM_TYPE, type WeixinClient } from './client.js'
 import {
   decryptAesEcb,
   encryptAesEcb,
@@ -154,45 +154,43 @@ export class WeixinMediaService {
     }
   }
 
+  /**
+   * Send an image to the WeChat user.
+   *
+   * NOTE — outbound media upload is currently not implemented against the
+   * Tencent v2.1.x wire protocol. The upload endpoint returns
+   * `{ upload_param, upload_full_url }` (no `ret`/`upload_url`/`filekey`)
+   * and the send-side ImageItem expects
+   * `media: { encrypt_query_param, aes_key_base64, encrypt_type:1 }, mid_size`,
+   * none of which our pipeline produces yet. Rather than silently send a
+   * malformed request that the server rejects with no user feedback, we
+   * throw a clear "not supported yet" error here. Text-message replies
+   * still work normally.
+   *
+   * Re-implementing the upload + CDN download_param plumbing is tracked as
+   * a follow-up; see adapters/wechat/client.ts SendItem types for the
+   * target shape.
+   */
   async sendImageMessage(
-    toUserId: string,
-    plaintext: Buffer,
-    contextToken?: string,
+    _toUserId: string,
+    _plaintext: Buffer,
+    _contextToken?: string,
   ): Promise<void> {
-    const { filekey, aeskey } = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.IMAGE)
-    const item: SendItem = { type: WX_ITEM_TYPE.IMAGE, image_item: { filekey, aeskey } }
-    const resp = await this.client.sendMessage({
-      to_user_id: toUserId,
-      context_token: contextToken,
-      item_list: [item],
-    })
-    if (resp.ret !== 0) {
-      throw new Error(
-        `[WechatMedia] sendImage failed: ret=${resp.ret} errcode=${resp.errcode} ${resp.errmsg ?? ''}`,
-      )
-    }
+    throw new Error(
+      '[WechatMedia] sendImageMessage: outbound image not supported yet on Tencent v2.1.x protocol; ' +
+        'text replies work. Track this in adapters/wechat/media.ts.',
+    )
   }
 
   async sendFileMessage(
-    toUserId: string,
-    plaintext: Buffer,
-    fileName: string,
-    contextToken?: string,
+    _toUserId: string,
+    _plaintext: Buffer,
+    _fileName: string,
+    _contextToken?: string,
   ): Promise<void> {
-    const { filekey, aeskey } = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.FILE)
-    const item: SendItem = {
-      type: WX_ITEM_TYPE.FILE,
-      file_item: { filekey, aeskey, filename: fileName },
-    }
-    const resp = await this.client.sendMessage({
-      to_user_id: toUserId,
-      context_token: contextToken,
-      item_list: [item],
-    })
-    if (resp.ret !== 0) {
-      throw new Error(
-        `[WechatMedia] sendFile failed: ret=${resp.ret} errcode=${resp.errcode} ${resp.errmsg ?? ''}`,
-      )
-    }
+    throw new Error(
+      '[WechatMedia] sendFileMessage: outbound file not supported yet on Tencent v2.1.x protocol; ' +
+        'text replies work. Track this in adapters/wechat/media.ts.',
+    )
   }
 }

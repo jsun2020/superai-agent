@@ -69,20 +69,41 @@ export const WX_ITEM_TYPE = {
 export const WX_ERR_TOKEN_EXPIRED = -14
 export const TOKEN_EXPIRED_PAUSE_MS = 30 * 60 * 1000 // 30 min, matches OpenClaw plugin
 
+/** Outbound media reference: same wire shape Tencent's plugin uploads to.
+ *  We pass `aes_key` already base64-encoded and `encrypt_query_param` from
+ *  the upload response. */
+export interface SendCdnMedia {
+  encrypt_query_param: string
+  aes_key: string
+  encrypt_type?: 0 | 1
+  full_url?: string
+}
+
 export type SendItem =
   | { type: 1; text_item: { text: string } }
-  | { type: 2; image_item: { filekey: string; aeskey: string } }
-  | { type: 4; file_item: { filekey: string; aeskey?: string; filename?: string } }
-  | { type: 5; video_item: { filekey: string; thumbkey?: string; aeskey?: string } }
+  | { type: 2; image_item: { media: SendCdnMedia; mid_size?: number } }
+  | { type: 4; file_item: { media: SendCdnMedia; file_name?: string; len?: string } }
+  | { type: 5; video_item: { media: SendCdnMedia; video_size?: number } }
 
 export interface BaseInfo {
   channel_version: string
 }
 
+/** Caller-facing sendMessage input. We accept the simpler shape and wrap
+ *  it in `{ msg: { ... } }` ourselves before posting (Tencent's wire format
+ *  requires a single-key `msg` envelope). */
 export interface SendMessageRequest {
   to_user_id: string
   context_token?: string
   item_list: SendItem[]
+}
+
+/** Bot-message constants used to populate the wire envelope. */
+const MSG_TYPE_BOT = 2
+const MSG_STATE_FINISH = 2
+
+function generateClientId(): string {
+  return `cc-haha-wechat:${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 }
 
 export interface UpdatesResponse {
@@ -258,8 +279,23 @@ export class WeixinClient {
     )
   }
 
-  async sendMessage(req: SendMessageRequest): Promise<{ ret: number; errcode?: number; errmsg?: string }> {
-    return this.post(WX_ENDPOINTS.sendMessage, req as unknown as Record<string, unknown>)
+  /** Send a single message downstream. The caller hands us the simple
+   *  { to_user_id, context_token, item_list } shape; we wrap it in the
+   *  required `{ msg: { ... } }` envelope with the BOT message_type +
+   *  FINISH state + a fresh client_id. */
+  async sendMessage(req: SendMessageRequest): Promise<{ ret?: number; errcode?: number; errmsg?: string }> {
+    const wireBody = {
+      msg: {
+        from_user_id: '',
+        to_user_id: req.to_user_id,
+        client_id: generateClientId(),
+        message_type: MSG_TYPE_BOT,
+        message_state: MSG_STATE_FINISH,
+        item_list: req.item_list,
+        context_token: req.context_token,
+      },
+    }
+    return this.post(WX_ENDPOINTS.sendMessage, wireBody)
   }
 
   async getUploadUrl(params: {
