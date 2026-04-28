@@ -16,7 +16,27 @@
  * pairing flow (see adapters/README.md) just like Telegram and Feishu do.
  */
 
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+
 import { randomWechatUin } from './crypto.js'
+
+/** Append a JSON line to ~/.claude/wechat-upload-debug.log. Used to
+ *  capture the v2.1.x getuploadurl request/response shape so we can
+ *  iterate on the protocol without attaching a debugger. Failures are
+ *  swallowed — diagnostics must never crash the bot. */
+function writeUploadDebugLog(record: Record<string, unknown>): void {
+  try {
+    const dir = path.join(os.homedir(), '.claude')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'wechat-upload-debug.log')
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n'
+    fs.appendFileSync(file, line, 'utf-8')
+  } catch {
+    // ignore — log path / disk full / permission issues must not propagate
+  }
+}
 
 export const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com'
 
@@ -318,7 +338,24 @@ export class WeixinClient {
     filesize: number
     aeskey: string
   }): Promise<UploadUrlResponse> {
-    return this.post<UploadUrlResponse>(WX_ENDPOINTS.getUploadUrl, params)
+    // The actual v2.1.x server response shape is not publicly documented
+    // and we've observed `ret=-2` with no errmsg — almost always a field-
+    // name mismatch on the request side. Log the request and full reply so
+    // we can iterate the schema without guessing. We also append to a
+    // known file under ~/.claude so the support flow can grab it without
+    // needing to attach to the sidecar's stdout.
+    console.log('[Wechat] getUploadUrl request:', JSON.stringify(params))
+    let resp: UploadUrlResponse
+    try {
+      resp = await this.post<UploadUrlResponse>(WX_ENDPOINTS.getUploadUrl, params)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      writeUploadDebugLog({ phase: 'request-error', request: params, error: msg })
+      throw err
+    }
+    console.log('[Wechat] getUploadUrl response:', JSON.stringify(resp))
+    writeUploadDebugLog({ phase: 'reply', request: params, response: resp })
+    return resp
   }
 
   /** Raw byte upload to the CDN URL returned by getUploadUrl. The body is
