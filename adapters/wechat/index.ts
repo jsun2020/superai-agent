@@ -587,6 +587,18 @@ function extractLastFilePath(text: string): string | undefined {
   return matches[matches.length - 1]!.replace(/[.,;:)\]}」、]+$/, '')
 }
 
+/** Heuristic: did the user ask the bot to deliver a file via natural
+ *  language? Catches Chinese ("发给我", "发我", "给我发", "把…发", "发过来",
+ *  "传给我") and English ("send (it) to me", "send me"). False positives are
+ *  acceptable here — sending an extra file is not destructive — so the
+ *  pattern errs on the inclusive side. */
+const SEND_TO_ME_REGEX =
+  /(?:发(?:给|送|来|过来)?\s*我|给\s*我\s*发|发(?:给|送)\s*过来|传给我|传我|send(?:\s+it)?\s+to\s+me|send\s+me)/i
+
+function looksLikeSendRequest(text: string): boolean {
+  return SEND_TO_ME_REGEX.test(text)
+}
+
 // ---------- inbound message handler ----------
 
 async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
@@ -695,6 +707,21 @@ async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
       }
       await sendFileToUser(chatId, target)
       return
+    }
+
+    // Natural-language "send me this file" detection. The user often types
+    // "把文件发给我" instead of /send_file, especially in WeChat. If the
+    // message both expresses send-intent AND includes (or implies via the
+    // last assistant-mentioned path) a target, deliver it directly without
+    // routing through the LLM — otherwise the assistant just apologizes
+    // for not having file-send tools, which is wrong now.
+    if (!hasAttachments && looksLikeSendRequest(msgText)) {
+      const inlinePath = extractLastFilePath(msgText)
+      const target = inlinePath || getRuntimeState(chatId).lastMentionedFilePath
+      if (target) {
+        await sendFileToUser(chatId, target)
+        return
+      }
     }
 
     if (!hasAttachments && pendingProjectSelection.has(chatId)) {
