@@ -23,6 +23,7 @@ import {
   formatImStatus,
   formatPermissionRequest,
   splitMessage,
+  WECHAT_PERMISSION_HINT,
 } from '../common/format.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient } from '../common/http-client.js'
@@ -87,6 +88,14 @@ type ChatRuntimeState = {
   /** Most recent context_token from the user. Required by the WeChat
    *  send API to thread replies under the user-initiated session. */
   contextToken?: string
+  /** When true, every incoming permission_request in the current assistant
+   *  turn is auto-approved without prompting the user. Cleared on
+   *  `message_complete` (one assistant turn = one auto-approve scope). */
+  permitAllInTurn: boolean
+  /** Last absolute filesystem path the assistant mentioned in this chat,
+   *  captured from streamed text. Used as the default target for
+   *  /send_file when the user invokes it without an argument. */
+  lastMentionedFilePath?: string
 }
 
 const runtimeStates = new Map<string, ChatRuntimeState>()
@@ -102,7 +111,7 @@ let pauseUntil = 0
 function getRuntimeState(chatId: string): ChatRuntimeState {
   let s = runtimeStates.get(chatId)
   if (!s) {
-    s = { state: 'idle', pendingPermissionCount: 0 }
+    s = { state: 'idle', pendingPermissionCount: 0, permitAllInTurn: false }
     runtimeStates.set(chatId, s)
   }
   return s
@@ -125,6 +134,8 @@ function clearTransientChatState(chatId: string): void {
   s.verb = undefined
   s.pendingPermissionCount = 0
   s.lastPermissionRequestId = undefined
+  s.permitAllInTurn = false
+  s.lastMentionedFilePath = undefined
 }
 
 // ---------- send helpers ----------
@@ -154,6 +165,54 @@ async function sendTextRaw(toUserId: string, text: string, contextToken?: string
 async function sendText(chatId: string, text: string): Promise<void> {
   const runtime = getRuntimeState(chatId)
   await sendTextRaw(chatId, text, runtime.contextToken)
+}
+
+/** Format a byte count as a friendly string (e.g. "245.3 KB"). */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** Read a local file and ship it to the user via WeChat outbound media.
+ *  On any protocol failure, reply with a text fallback containing the
+ *  metadata + path so the user can retrieve via the desktop app. Image
+ *  files are delivered via sendImageMessage so WeChat displays them inline. */
+async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
+  const runtime = getRuntimeState(chatId)
+  let buffer: Buffer
+  try {
+    buffer = await fs.readFile(filePath)
+  } catch (err) {
+    await sendText(chatId, `❌ 无法读取文件: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  const fileName = path.basename(filePath)
+  const ext = path.extname(fileName).toLowerCase()
+  const isImage = /^\.(png|jpe?g|gif|webp|heic)$/.test(ext)
+  const kind: 'image' | 'file' = isImage ? 'image' : 'file'
+
+  const check = checkAttachmentLimit(kind, buffer.length)
+  if (!check.ok) {
+    await sendText(chatId, `❌ ${check.hint}\n路径: ${filePath}`)
+    return
+  }
+
+  try {
+    if (isImage) {
+      await media.sendImageMessage(chatId, buffer, runtime.contextToken)
+    } else {
+      await media.sendFileMessage(chatId, buffer, fileName, runtime.contextToken)
+    }
+    runtime.lastMentionedFilePath = filePath
+  } catch (err) {
+    console.error('[Wechat] sendFileToUser failed:', err instanceof Error ? err.message : err)
+    await sendText(
+      chatId,
+      `📎 文件: ${fileName} (${formatSize(buffer.length)})\n路径: ${filePath}\n` +
+        `⚠️ 直传失败 (${err instanceof Error ? err.message : err})。请在桌面端打开会话目录获取。`,
+    )
+  }
 }
 
 async function dispatchOutboundImage(chatId: string, pending: PendingUpload): Promise<void> {
@@ -372,11 +431,19 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
     case 'content_delta': {
       if (typeof msg.text !== 'string' || !msg.text) break
       const prev = streamingBuffers.get(chatId) ?? ''
-      streamingBuffers.set(chatId, prev + msg.text)
+      const next = prev + msg.text
+      streamingBuffers.set(chatId, next)
       const newUploads = getImageWatcher(chatId).feed(msg.text)
       for (const pending of newUploads) {
         void dispatchOutboundImage(chatId, pending)
       }
+      // Track the most recent absolute file path the assistant mentioned so
+      // /send_file with no argument can default to it. We scan the freshly
+      // appended slice plus a small overlap from the previous buffer to
+      // catch paths that span chunk boundaries.
+      const overlap = prev.slice(Math.max(0, prev.length - 256))
+      const mentioned = extractLastFilePath(overlap + msg.text)
+      if (mentioned) runtime.lastMentionedFilePath = mentioned
       break
     }
 
@@ -393,9 +460,18 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       runtime.pendingPermissionCount += 1
       runtime.state = 'permission_pending'
       runtime.lastPermissionRequestId = msg.requestId
+      // Per-turn auto-approve: user replied "ys" earlier in this assistant
+      // turn, so silently approve and skip the prompt. Counter is decremented
+      // to keep the status panel accurate.
+      if (runtime.permitAllInTurn) {
+        bridge.sendPermissionResponse(chatId, msg.requestId, true)
+        runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+        runtime.lastPermissionRequestId = undefined
+        break
+      }
       const text =
         formatPermissionRequest(msg.toolName, msg.input, msg.requestId) +
-        '\n\n回复 `y` 允许，`n` 拒绝。'
+        `\n\n${WECHAT_PERMISSION_HINT}`
       await sendText(chatId, text)
       break
     }
@@ -403,10 +479,17 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
     case 'message_complete': {
       runtime.state = 'idle'
       runtime.verb = undefined
+      // Auto-approve scope is one assistant turn — clear it now so the next
+      // turn requires fresh confirmation.
+      runtime.permitAllInTurn = false
       const buffered = streamingBuffers.get(chatId) ?? ''
       streamingBuffers.delete(chatId)
       imageWatchers.delete(chatId)
-      if (buffered.trim()) await sendText(chatId, buffered)
+      if (buffered.trim()) {
+        const mentioned = extractLastFilePath(buffered)
+        if (mentioned) runtime.lastMentionedFilePath = mentioned
+        await sendText(chatId, buffered)
+      }
       break
     }
 
@@ -449,6 +532,28 @@ function tryHandlePermissionShortcut(chatId: string, text: string): boolean {
   const requestId = runtime.lastPermissionRequestId
   if (!requestId) return false
   const trimmed = text.trim().toLowerCase()
+
+  // Always-allow: pin a session rule via the existing rule='always' wire so
+  // the same tool stops prompting for the rest of this session.
+  if (trimmed === 'ya' || trimmed === '永远' || trimmed === '永远允许' || trimmed === 'always') {
+    bridge.sendPermissionResponse(chatId, requestId, true, 'always')
+    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+    runtime.lastPermissionRequestId = undefined
+    void sendText(chatId, '✅ 已允许，本会话内此工具不再询问')
+    return true
+  }
+
+  // Per-turn auto-approve: allow the current request and silently accept
+  // every subsequent permission_request until message_complete.
+  if (trimmed === 'ys' || trimmed === '本轮' || trimmed === '本轮允许' || trimmed === 'session') {
+    bridge.sendPermissionResponse(chatId, requestId, true)
+    runtime.permitAllInTurn = true
+    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+    runtime.lastPermissionRequestId = undefined
+    void sendText(chatId, '✅ 本轮后续操作将自动允许')
+    return true
+  }
+
   if (trimmed === 'y' || trimmed === 'yes' || trimmed === '允许' || trimmed === '1') {
     bridge.sendPermissionResponse(chatId, requestId, true)
     runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
@@ -464,6 +569,22 @@ function tryHandlePermissionShortcut(chatId: string, text: string): boolean {
     return true
   }
   return false
+}
+
+// ---------- file path extraction ----------
+
+/** Match the last absolute filesystem path that looks like a real file
+ *  (has an extension) inside a string. Handles Windows backslash paths
+ *  ("C:\foo\bar.pptx") and POSIX paths ("/home/user/x.pdf"), trimming
+ *  trailing punctuation that often follows path mentions in prose. */
+const FILE_PATH_REGEX =
+  /([A-Za-z]:\\[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8}|\/[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8})/g
+
+function extractLastFilePath(text: string): string | undefined {
+  const matches = text.match(FILE_PATH_REGEX)
+  if (!matches || matches.length === 0) return undefined
+  // Strip trailing closing punctuation that doesn't belong to the path.
+  return matches[matches.length - 1]!.replace(/[.,;:)\]}」、]+$/, '')
 }
 
 // ---------- inbound message handler ----------
@@ -544,6 +665,35 @@ async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
     }
     if (!hasAttachments && (msgText === '/projects' || msgText === '项目列表')) {
       await showProjectPicker(chatId)
+      return
+    }
+
+    // /send_file [path] — deliver a local file to the user. Without an
+    // explicit path, fall back to the last absolute path the assistant
+    // mentioned in this chat. Aliases: /sf, /发送, /发我.
+    if (
+      !hasAttachments &&
+      (msgText === '/send_file' ||
+        msgText.startsWith('/send_file ') ||
+        msgText === '/sf' ||
+        msgText.startsWith('/sf ') ||
+        msgText === '/发送' ||
+        msgText.startsWith('/发送 ') ||
+        msgText === '/发我' ||
+        msgText.startsWith('/发我 '))
+    ) {
+      const space = msgText.indexOf(' ')
+      const arg = space >= 0 ? msgText.slice(space + 1).trim() : ''
+      const target = arg || getRuntimeState(chatId).lastMentionedFilePath
+      if (!target) {
+        await sendText(
+          chatId,
+          '用法: /send_file <文件路径>\n例: /send_file C:\\path\\to\\file.pptx\n\n' +
+            '提示: 助手刚才提到的文件路径会自动记忆，下次直接发送 /send_file 即可。',
+        )
+        return
+      }
+      await sendFileToUser(chatId, target)
       return
     }
 

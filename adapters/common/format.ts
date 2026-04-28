@@ -31,7 +31,10 @@ const IM_HELP_LINES = [
   '/status — 查看当前会话状态',
   '/clear — 清空当前会话上下文',
   '/stop — 停止当前生成',
+  '/send_file [路径] — 发送本地文件到当前聊天 (微信)',
   '/help — 显示这份帮助',
+  '',
+  '权限确认: y 允许 / n 拒绝 / ya 始终允许该工具 / ys 本轮全部允许',
 ]
 
 /** Split text into chunks that fit within a character limit, respecting paragraph/sentence boundaries. */
@@ -142,6 +145,11 @@ export function formatPermissionRequest(toolName: string, input: unknown, reques
   const preview = truncateInput(input, 300)
   return `🔐 需要权限确认 [${requestId}]\n工具: ${toolName}\n${preview}`
 }
+
+/** Inline hint listing every shortcut accepted by the WeChat permission
+ *  handler. Kept centralised so the prompt and /help stay in sync. */
+export const WECHAT_PERMISSION_HINT =
+  '回复 `y` 允许一次，`n` 拒绝；`ya` 始终允许该工具；`ys` 本轮全部允许。'
 
 /** Truncate tool input to a preview string. */
 export function truncateInput(input: unknown, maxLen: number): string {

@@ -137,10 +137,22 @@ export interface WeixinMessageItem {
   video_item?: { filekey?: string; aeskey?: string; thumbkey?: string; cdn_url?: string }
 }
 
+/** getuploadurl reply.
+ *
+ *  v2.1.x reshaped the response: success no longer carries `ret`/`upload_url`
+ *  /`filekey`. Instead the server returns the CDN target as `upload_full_url`
+ *  and an opaque `upload_param` token that the client must echo back as
+ *  `encrypt_query_param` in the subsequent sendmessage. We keep both shapes
+ *  declared here so the media service can pick whichever the live server
+ *  actually returns. */
 export interface UploadUrlResponse {
-  ret: number
+  ret?: number
   errcode?: number
   errmsg?: string
+  // v2.1.x fields:
+  upload_param?: string
+  upload_full_url?: string
+  // legacy v1.x fields (kept for back-compat / fallback):
   upload_url?: string
   filekey?: string
   upload_method?: 'PUT' | 'POST'
