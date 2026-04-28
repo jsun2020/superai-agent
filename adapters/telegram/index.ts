@@ -28,6 +28,12 @@ import type { AttachmentRef } from '../common/ws-bridge.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
 import type { PendingUpload } from '../common/attachment/attachment-types.js'
 import * as fs from 'node:fs/promises'
+import {
+  extractLastFilePath,
+  formatFileSize,
+  isImageFile,
+  looksLikeSendRequest,
+} from '../common/file-send.js'
 
 const TELEGRAM_TEXT_LIMIT = 4000 // leave margin below 4096
 
@@ -76,6 +82,9 @@ type ChatRuntimeState = {
   verb?: string
   model?: string
   pendingPermissionCount: number
+  /** Last absolute filesystem path the assistant mentioned in this chat,
+   *  remembered so /send_file with no argument can default to it. */
+  lastMentionedFilePath?: string
 }
 
 // ---------- helpers ----------
@@ -380,6 +389,10 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
         for (const pending of newUploads) {
           void dispatchOutboundMedia(chatId, pending)
         }
+        const mentioned = extractLastFilePath(msg.text)
+        if (mentioned) {
+          getRuntimeState(chatId).lastMentionedFilePath = mentioned
+        }
       }
       break
 
@@ -562,6 +575,37 @@ bot.command('status', async (ctx) => {
   await ctx.reply(await buildStatusText(chatId))
 })
 
+/** /send_file [path] — deliver a local file to the user. Without an
+ *  explicit path, fall back to the last absolute path the assistant
+ *  mentioned during streaming. Aliases /sf is also registered.
+ *  Chinese-style aliases (/发送, /发我) and the natural-language
+ *  trigger ("把文件发给我") are picked up by the message:text handler
+ *  via parseSendFileCommand / looksLikeSendRequest. */
+async function handleSendFileCommand(ctx: Context, arg: string): Promise<void> {
+  if (ctx.chat?.type !== 'private') return
+  if (!ctx.from || !isAllowedUser('telegram', ctx.from.id)) {
+    await ctx.reply('🔒 未授权。')
+    return
+  }
+  const chatId = String(ctx.chat.id)
+  const target = arg.trim() || getRuntimeState(chatId).lastMentionedFilePath
+  if (!target) {
+    await ctx.reply(
+      '用法: /send_file <文件路径>\n例: /send_file C:\\path\\to\\file.pdf\n\n' +
+        '提示: 助手刚才提到的文件路径会自动记忆，下次直接发送 /send_file 即可。',
+    )
+    return
+  }
+  await sendFileToUser(chatId, target)
+}
+
+bot.command('send_file', async (ctx) => {
+  await handleSendFileCommand(ctx, ctx.match ?? '')
+})
+bot.command('sf', async (ctx) => {
+  await handleSendFileCommand(ctx, ctx.match ?? '')
+})
+
 bot.command('clear', (ctx) => {
   const chatId = String(ctx.chat.id)
   void (async () => {
@@ -579,6 +623,48 @@ bot.command('clear', (ctx) => {
     await ctx.reply('🧹 已清空当前会话上下文。')
   })()
 })
+
+/** Read a local file and ship it to the user via Telegram outbound
+ *  media. Picks sendPhoto for images so they render inline, sendDocument
+ *  for everything else. On failure, reply with a text fallback. */
+async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
+  const numericChatId = Number(chatId)
+  let buffer: Buffer
+  try {
+    buffer = await fs.readFile(filePath)
+  } catch (err) {
+    await bot.api.sendMessage(
+      numericChatId,
+      `❌ 无法读取文件: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return
+  }
+  const fileName = path.basename(filePath)
+  const isImage = isImageFile(filePath)
+  const kind: 'image' | 'file' = isImage ? 'image' : 'file'
+
+  const check = checkAttachmentLimit(kind, buffer.length)
+  if (!check.ok) {
+    await bot.api.sendMessage(numericChatId, `❌ ${check.hint}\n路径: ${filePath}`)
+    return
+  }
+
+  try {
+    if (isImage) {
+      await media.sendPhoto(numericChatId, buffer)
+    } else {
+      await media.sendDocument(numericChatId, buffer, fileName)
+    }
+    getRuntimeState(chatId).lastMentionedFilePath = filePath
+  } catch (err) {
+    console.error('[Telegram] sendFileToUser failed:', err instanceof Error ? err.message : err)
+    await bot.api.sendMessage(
+      numericChatId,
+      `📎 文件: ${fileName} (${formatFileSize(buffer.length)})\n路径: ${filePath}\n` +
+        `⚠️ 发送失败 (${err instanceof Error ? err.message : err})。请在桌面端打开会话目录获取。`,
+    )
+  }
+}
 
 /** Shared per-user-message pipeline: dedup, pairing check, project-pick
  *  routing, enqueue, ensureSession, sendUserMessage with attachments.
@@ -693,7 +779,29 @@ async function collectAttachmentsFromCtx(
 }
 
 bot.on('message:text', async (ctx) => {
-  await routeUserMessage(ctx, ctx.message.text, [])
+  const text = ctx.message.text
+  // Chinese-style send-file aliases that grammY's bot.command() can't pick
+  // up (only ASCII command names are allowed there): /发送, /发我.
+  if (ctx.chat?.type === 'private' && ctx.from && isAllowedUser('telegram', ctx.from.id)) {
+    const trimmed = text.trim()
+    for (const alias of ['/发送', '/发我']) {
+      if (trimmed === alias || trimmed.startsWith(alias + ' ')) {
+        const arg = trimmed === alias ? '' : trimmed.slice(alias.length + 1).trim()
+        await handleSendFileCommand(ctx, arg)
+        return
+      }
+    }
+    // Natural-language send-intent: "把文件发给我", "send me X", etc.
+    if (looksLikeSendRequest(text)) {
+      const inlinePath = extractLastFilePath(text)
+      const target = inlinePath || getRuntimeState(String(ctx.chat.id)).lastMentionedFilePath
+      if (target) {
+        await sendFileToUser(String(ctx.chat.id), target)
+        return
+      }
+    }
+  }
+  await routeUserMessage(ctx, text, [])
 })
 
 bot.on(

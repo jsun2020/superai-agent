@@ -32,6 +32,13 @@ import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
 import type { PendingUpload } from '../common/attachment/attachment-types.js'
+import {
+  extractLastFilePath,
+  formatFileSize,
+  isImageFile,
+  looksLikeSendRequest,
+  parseSendFileCommand,
+} from '../common/file-send.js'
 
 import { listAccounts, loadAccount, loadSyncCursor, saveSyncCursor } from './account-store.js'
 import {
@@ -167,13 +174,6 @@ async function sendText(chatId: string, text: string): Promise<void> {
   await sendTextRaw(chatId, text, runtime.contextToken)
 }
 
-/** Format a byte count as a friendly string (e.g. "245.3 KB"). */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
 /** Read a local file and ship it to the user via WeChat outbound media.
  *  On any protocol failure, reply with a text fallback containing the
  *  metadata + path so the user can retrieve via the desktop app. Image
@@ -188,8 +188,7 @@ async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
     return
   }
   const fileName = path.basename(filePath)
-  const ext = path.extname(fileName).toLowerCase()
-  const isImage = /^\.(png|jpe?g|gif|webp|heic)$/.test(ext)
+  const isImage = isImageFile(filePath)
   const kind: 'image' | 'file' = isImage ? 'image' : 'file'
 
   const check = checkAttachmentLimit(kind, buffer.length)
@@ -209,7 +208,7 @@ async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
     console.error('[Wechat] sendFileToUser failed:', err instanceof Error ? err.message : err)
     await sendText(
       chatId,
-      `📎 文件: ${fileName} (${formatSize(buffer.length)})\n路径: ${filePath}\n` +
+      `📎 文件: ${fileName} (${formatFileSize(buffer.length)})\n路径: ${filePath}\n` +
         `⚠️ 直传失败 (${err instanceof Error ? err.message : err})。请在桌面端打开会话目录获取。`,
     )
   }
@@ -573,32 +572,6 @@ function tryHandlePermissionShortcut(chatId: string, text: string): boolean {
 
 // ---------- file path extraction ----------
 
-/** Match the last absolute filesystem path that looks like a real file
- *  (has an extension) inside a string. Handles Windows backslash paths
- *  ("C:\foo\bar.pptx") and POSIX paths ("/home/user/x.pdf"), trimming
- *  trailing punctuation that often follows path mentions in prose. */
-const FILE_PATH_REGEX =
-  /([A-Za-z]:\\[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8}|\/[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8})/g
-
-function extractLastFilePath(text: string): string | undefined {
-  const matches = text.match(FILE_PATH_REGEX)
-  if (!matches || matches.length === 0) return undefined
-  // Strip trailing closing punctuation that doesn't belong to the path.
-  return matches[matches.length - 1]!.replace(/[.,;:)\]}」、]+$/, '')
-}
-
-/** Heuristic: did the user ask the bot to deliver a file via natural
- *  language? Catches Chinese ("发给我", "发我", "给我发", "把…发", "发过来",
- *  "传给我") and English ("send (it) to me", "send me"). False positives are
- *  acceptable here — sending an extra file is not destructive — so the
- *  pattern errs on the inclusive side. */
-const SEND_TO_ME_REGEX =
-  /(?:发(?:给|送|来|过来)?\s*我|给\s*我\s*发|发(?:给|送)\s*过来|传给我|传我|send(?:\s+it)?\s+to\s+me|send\s+me)/i
-
-function looksLikeSendRequest(text: string): boolean {
-  return SEND_TO_ME_REGEX.test(text)
-}
-
 // ---------- inbound message handler ----------
 
 async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
@@ -683,30 +656,21 @@ async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
     // /send_file [path] — deliver a local file to the user. Without an
     // explicit path, fall back to the last absolute path the assistant
     // mentioned in this chat. Aliases: /sf, /发送, /发我.
-    if (
-      !hasAttachments &&
-      (msgText === '/send_file' ||
-        msgText.startsWith('/send_file ') ||
-        msgText === '/sf' ||
-        msgText.startsWith('/sf ') ||
-        msgText === '/发送' ||
-        msgText.startsWith('/发送 ') ||
-        msgText === '/发我' ||
-        msgText.startsWith('/发我 '))
-    ) {
-      const space = msgText.indexOf(' ')
-      const arg = space >= 0 ? msgText.slice(space + 1).trim() : ''
-      const target = arg || getRuntimeState(chatId).lastMentionedFilePath
-      if (!target) {
-        await sendText(
-          chatId,
-          '用法: /send_file <文件路径>\n例: /send_file C:\\path\\to\\file.pptx\n\n' +
-            '提示: 助手刚才提到的文件路径会自动记忆，下次直接发送 /send_file 即可。',
-        )
+    {
+      const sendCmd = !hasAttachments ? parseSendFileCommand(msgText) : { matched: false, arg: '' }
+      if (sendCmd.matched) {
+        const target = sendCmd.arg || getRuntimeState(chatId).lastMentionedFilePath
+        if (!target) {
+          await sendText(
+            chatId,
+            '用法: /send_file <文件路径>\n例: /send_file C:\\path\\to\\file.pptx\n\n' +
+              '提示: 助手刚才提到的文件路径会自动记忆，下次直接发送 /send_file 即可。',
+          )
+          return
+        }
+        await sendFileToUser(chatId, target)
         return
       }
-      await sendFileToUser(chatId, target)
-      return
     }
 
     // Natural-language "send me this file" detection. The user often types

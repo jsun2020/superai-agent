@@ -30,6 +30,13 @@ import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
 import type { PendingUpload } from '../common/attachment/attachment-types.js'
+import {
+  extractLastFilePath,
+  formatFileSize,
+  isImageFile,
+  looksLikeSendRequest,
+  parseSendFileCommand,
+} from '../common/file-send.js'
 
 // ---------- init ----------
 
@@ -80,6 +87,9 @@ type ChatRuntimeState = {
   verb?: string
   model?: string
   pendingPermissionCount: number
+  /** Last absolute filesystem path the assistant mentioned in this chat,
+   *  remembered so /send_file with no argument can default to it. */
+  lastMentionedFilePath?: string
 }
 
 // ---------- helpers ----------
@@ -119,6 +129,48 @@ function getUploadedKeys(chatId: string): Map<string, string> {
     uploadedImageKeys.set(chatId, m)
   }
   return m
+}
+
+/** Read a local file and ship it to the user via Feishu im.file (or
+ *  im.image for renderable images). On failure, reply with a text
+ *  fallback containing the metadata + path so the user can still locate
+ *  the file via the desktop app. */
+async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
+  const runtime = getRuntimeState(chatId)
+  let buffer: Buffer
+  try {
+    buffer = await fs.readFile(filePath)
+  } catch (err) {
+    await sendText(chatId, `❌ 无法读取文件: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  const fileName = path.basename(filePath)
+  const isImage = isImageFile(filePath)
+  const kind: 'image' | 'file' = isImage ? 'image' : 'file'
+
+  const check = checkAttachmentLimit(kind, buffer.length)
+  if (!check.ok) {
+    await sendText(chatId, `❌ ${check.hint}\n路径: ${filePath}`)
+    return
+  }
+
+  try {
+    if (isImage) {
+      const imageKey = await media.uploadImage(buffer, 'image/png')
+      await media.sendImageMessage(chatId, imageKey)
+    } else {
+      const fileKey = await media.uploadFile(buffer, fileName)
+      await media.sendFileMessage(chatId, fileKey)
+    }
+    runtime.lastMentionedFilePath = filePath
+  } catch (err) {
+    console.error('[Feishu] sendFileToUser failed:', err instanceof Error ? err.message : err)
+    await sendText(
+      chatId,
+      `📎 文件: ${fileName} (${formatFileSize(buffer.length)})\n路径: ${filePath}\n` +
+        `⚠️ 发送失败 (${err instanceof Error ? err.message : err})。请在桌面端打开会话目录获取。`,
+    )
+  }
 }
 
 /** Upload a PendingUpload found in streaming output and send it as an
@@ -817,6 +869,14 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
         for (const pending of newUploads) {
           void dispatchOutboundImage(chatId, pending)
         }
+
+        // Remember the last absolute filesystem path the assistant
+        // mentioned in this chat so /send_file with no argument (or a
+        // bare "把文件发给我") can default to it.
+        const mentioned = extractLastFilePath(msg.text)
+        if (mentioned) {
+          getRuntimeState(chatId).lastMentionedFilePath = mentioned
+        }
       }
       break
     }
@@ -1000,6 +1060,37 @@ async function handleMessage(data: any): Promise<void> {
     if (!hasAttachments && (msgText === '/help' || msgText === '帮助')) {
       await sendText(chatId, formatImHelp())
       return
+    }
+    // /send_file [path] — deliver a local file to the user. Aliases:
+    // /sf, /发送, /发我. Without an explicit path, fall back to the last
+    // absolute path the assistant mentioned during streaming.
+    {
+      const sendCmd = !hasAttachments ? parseSendFileCommand(msgText) : { matched: false, arg: '' }
+      if (sendCmd.matched) {
+        const target = sendCmd.arg || getRuntimeState(chatId).lastMentionedFilePath
+        if (!target) {
+          await sendText(
+            chatId,
+            '用法: /send_file <文件路径>\n例: /send_file C:\\path\\to\\file.pptx\n\n' +
+              '提示: 助手刚才提到的文件路径会自动记忆，下次直接发送 /send_file 即可。',
+          )
+          return
+        }
+        await sendFileToUser(chatId, target)
+        return
+      }
+    }
+    // Natural-language send-intent: "把文件发给我", "send me X", etc.
+    // If the message both expresses intent AND includes a path inline (or
+    // implies one via the last assistant-mentioned path), deliver it
+    // directly without routing through the LLM.
+    if (!hasAttachments && looksLikeSendRequest(msgText)) {
+      const inlinePath = extractLastFilePath(msgText)
+      const target = inlinePath || getRuntimeState(chatId).lastMentionedFilePath
+      if (target) {
+        await sendFileToUser(chatId, target)
+        return
+      }
     }
     if (!hasAttachments && (msgText === '/status' || msgText === '状态')) {
       await sendText(chatId, await buildStatusText(chatId))
