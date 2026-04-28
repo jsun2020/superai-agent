@@ -532,7 +532,13 @@ fn wait_for_server(url_host: &str, port: u16) -> Result<(), String> {
     let addr: SocketAddr = format!("{url_host}:{port}")
         .parse()
         .map_err(|err| format!("parse server address: {err}"))?;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // Bun-compiled sidecars on Windows can need 15-25s to cold-boot the
+    // first time after a build (AV scan of the 127 MB binary + JS runtime
+    // init). The previous 10s budget tripped on those launches even though
+    // the sidecar booted successfully a few seconds later. 30s gives AV a
+    // realistic window without making genuine failures feel sluggish.
+    let timeout = Duration::from_secs(30);
+    let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
         if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
@@ -542,7 +548,8 @@ fn wait_for_server(url_host: &str, port: u16) -> Result<(), String> {
     }
 
     Err(format!(
-        "desktop server did not start listening on {url_host}:{port} within 10 seconds"
+        "desktop server did not start listening on {url_host}:{port} within {} seconds",
+        timeout.as_secs()
     ))
 }
 
