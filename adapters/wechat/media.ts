@@ -159,10 +159,14 @@ export class WeixinMediaService {
     if (!uploadUrl) {
       throw new Error('[WechatMedia] getUploadUrl returned no upload URL')
     }
-    await this.client.putToCdn(uploadUrl, ciphertext)
+    // The CDN upload response header `x-encrypted-param` is the token that
+    // must be echoed as encrypt_query_param. The original `upload_param` is
+    // consumed during the upload itself and is NOT a valid encrypt_query_param
+    // for sendmessage.
+    const downloadParam = await this.client.postToCdn(uploadUrl, ciphertext)
 
     return {
-      encrypt_query_param: slot.upload_param ?? slot.filekey ?? proposedKey,
+      encrypt_query_param: downloadParam,
       aes_key: aeskeyB64,
       encrypt_type: 1,
       full_url: uploadUrl,

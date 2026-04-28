@@ -363,22 +363,36 @@ export class WeixinClient {
     return resp
   }
 
-  /** Raw byte upload to the CDN URL returned by getUploadUrl. The body is
-   *  AES-128-ECB ciphertext; the server will decrypt with the aeskey we
-   *  registered in getUploadUrl. */
-  async putToCdn(uploadUrl: string, ciphertext: Buffer, timeoutMs = 60_000): Promise<void> {
+  /** POST encrypted bytes to the CDN URL returned by getUploadUrl, and
+   *  return the `x-encrypted-param` header value the server produces.
+   *
+   *  Wire details cribbed from Tencent/openclaw-weixin/src/cdn/cdn-upload.ts:
+   *    - method MUST be POST (PUT yields HTTP 404 from the v2.1.x CDN)
+   *    - Content-Type: application/octet-stream
+   *    - body is the AES-128-ECB ciphertext registered via getuploadurl
+   *    - on success the response carries `x-encrypted-param` — that token
+   *      (NOT the original upload_param) is what the next sendmessage call
+   *      must echo as encrypt_query_param so the recipient's download URL
+   *      stays valid. */
+  async postToCdn(uploadUrl: string, ciphertext: Buffer, timeoutMs = 60_000): Promise<string> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
       const resp = await fetch(uploadUrl, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
-        body: ciphertext,
+        body: new Uint8Array(ciphertext),
         signal: ctrl.signal,
       })
       if (!resp.ok) {
-        throw new Error(`[Wechat] CDN PUT -> HTTP ${resp.status}`)
+        const errMsg = resp.headers.get('x-error-message') ?? `status ${resp.status}`
+        throw new Error(`[Wechat] CDN POST -> HTTP ${resp.status}: ${errMsg}`)
       }
+      const downloadParam = resp.headers.get('x-encrypted-param')
+      if (!downloadParam) {
+        throw new Error('[Wechat] CDN POST: missing x-encrypted-param header in response')
+      }
+      return downloadParam
     } finally {
       clearTimeout(timer)
     }
