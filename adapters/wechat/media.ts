@@ -15,7 +15,8 @@
 import * as path from 'node:path'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import type { LocalAttachment } from '../common/attachment/attachment-types.js'
-import { WX_ITEM_TYPE, type SendCdnMedia, type WeixinClient } from './client.js'
+import * as crypto from 'node:crypto'
+import { WX_ITEM_TYPE, WX_UPLOAD_MEDIA_TYPE, type SendCdnMedia, type WeixinClient } from './client.js'
 import {
   decryptAesEcb,
   encryptAesEcb,
@@ -128,24 +129,35 @@ export class WeixinMediaService {
    *  v1.x `upload_url` field if that's what the server actually returned. */
   private async uploadEncrypted(
     plaintext: Buffer,
-    mediaType: number,
+    sendItemType: number,
     toUserId: string,
   ): Promise<SendCdnMedia> {
     const key = randomAesKey()
     const ciphertext = encryptAesEcb(plaintext, key)
-    const aeskeyB64 = key.toString('base64')
+    const aeskeyHex = key.toString('hex')
     const fingerprint = md5Hex(plaintext)
-    const proposedKey = `cc-haha-${fingerprint}-${plaintext.length}`
+    // Random per-upload filekey, matching Tencent canonical (16 random bytes
+    // → 32-char hex). A deterministic prefix-based key risks the server
+    // returning a stale CDN slot from a prior upload of the same blob.
+    const filekey = crypto.randomBytes(16).toString('hex')
+    // Map the sendmessage item type to the upload-side media_type enum.
+    // WX_ITEM_TYPE: TEXT=1, IMAGE=2, VOICE=3, FILE=4, VIDEO=5
+    // WX_UPLOAD_MEDIA_TYPE: IMAGE=1, VIDEO=2, FILE=3, VOICE=4
+    const uploadMediaType =
+      sendItemType === WX_ITEM_TYPE.IMAGE ? WX_UPLOAD_MEDIA_TYPE.IMAGE
+      : sendItemType === WX_ITEM_TYPE.VIDEO ? WX_UPLOAD_MEDIA_TYPE.VIDEO
+      : sendItemType === WX_ITEM_TYPE.VOICE ? WX_UPLOAD_MEDIA_TYPE.VOICE
+      : WX_UPLOAD_MEDIA_TYPE.FILE
 
     const slot = await this.client.getUploadUrl({
-      filekey: proposedKey,
-      media_type: mediaType,
+      filekey,
+      media_type: uploadMediaType,
       to_user_id: toUserId,
       rawsize: plaintext.length,
       rawfilemd5: fingerprint,
       filesize: paddedSize(plaintext.length),
-      aeskey: aeskeyB64,
-      no_need_thumb: mediaType !== 2,
+      aeskey: aeskeyHex,
+      no_need_thumb: sendItemType !== WX_ITEM_TYPE.IMAGE,
     })
     // v1.x signalled failure via `ret !== 0`; v2.1.x leaves `ret` absent on
     // success. Treat absence-of-error as success and only abort when an
@@ -165,11 +177,18 @@ export class WeixinMediaService {
     // for sendmessage.
     const downloadParam = await this.client.postToCdn(uploadUrl, ciphertext)
 
+    // The recipient's WeChat client expects aes_key as base64-of-the-hex-string,
+    // not base64 of the raw 16 bytes. See Tencent/openclaw-weixin
+    // src/messaging/send.ts: `Buffer.from(uploaded.aeskey).toString("base64")`
+    // where uploaded.aeskey is the hex string. Passing raw-bytes-base64 here
+    // makes the recipient decrypt with the wrong key and the message renders
+    // as nothing (silent failure, no protocol-level error).
+    const aesKeyForSendMessage = Buffer.from(aeskeyHex, 'utf-8').toString('base64')
+
     return {
       encrypt_query_param: downloadParam,
-      aes_key: aeskeyB64,
+      aes_key: aesKeyForSendMessage,
       encrypt_type: 1,
-      full_url: uploadUrl,
     }
   }
 

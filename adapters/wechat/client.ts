@@ -86,6 +86,19 @@ export const WX_ITEM_TYPE = {
   VIDEO: 5,
 } as const
 
+/** Upload-side media_type enum used by getuploadurl. WARNING: this enum is
+ *  DIFFERENT from WX_ITEM_TYPE — Tencent's wire protocol numbers the same
+ *  media kinds differently between upload registration and sendmessage. See
+ *  Tencent/openclaw-weixin/src/api/types.ts (UploadMediaType vs MessageItemType).
+ *  Mixing them results in the upload being filed under the wrong slot type
+ *  and the recipient client silently failing to render the message. */
+export const WX_UPLOAD_MEDIA_TYPE = {
+  IMAGE: 1,
+  VIDEO: 2,
+  FILE: 3,
+  VOICE: 4,
+} as const
+
 export const WX_ERR_TOKEN_EXPIRED = -14
 export const TOKEN_EXPIRED_PAUSE_MS = 30 * 60 * 1000 // 30 min, matches OpenClaw plugin
 
@@ -96,7 +109,6 @@ export interface SendCdnMedia {
   encrypt_query_param: string
   aes_key: string
   encrypt_type?: 0 | 1
-  full_url?: string
 }
 
 export type SendItem =
