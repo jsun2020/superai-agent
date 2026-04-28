@@ -129,6 +129,7 @@ export class WeixinMediaService {
   private async uploadEncrypted(
     plaintext: Buffer,
     mediaType: number,
+    toUserId: string,
   ): Promise<SendCdnMedia> {
     const key = randomAesKey()
     const ciphertext = encryptAesEcb(plaintext, key)
@@ -139,10 +140,12 @@ export class WeixinMediaService {
     const slot = await this.client.getUploadUrl({
       filekey: proposedKey,
       media_type: mediaType,
+      to_user_id: toUserId,
       rawsize: plaintext.length,
       rawfilemd5: fingerprint,
       filesize: paddedSize(plaintext.length),
       aeskey: aeskeyB64,
+      no_need_thumb: mediaType !== 2,
     })
     // v1.x signalled failure via `ret !== 0`; v2.1.x leaves `ret` absent on
     // success. Treat absence-of-error as success and only abort when an
@@ -178,7 +181,7 @@ export class WeixinMediaService {
     plaintext: Buffer,
     contextToken?: string,
   ): Promise<void> {
-    const media = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.IMAGE)
+    const media = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.IMAGE, toUserId)
     const resp = await this.client.sendMessage({
       to_user_id: toUserId,
       context_token: contextToken,
@@ -202,7 +205,7 @@ export class WeixinMediaService {
     fileName: string,
     contextToken?: string,
   ): Promise<void> {
-    const media = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.FILE)
+    const media = await this.uploadEncrypted(plaintext, WX_ITEM_TYPE.FILE, toUserId)
     const resp = await this.client.sendMessage({
       to_user_id: toUserId,
       context_token: contextToken,

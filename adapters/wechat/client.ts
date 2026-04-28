@@ -333,10 +333,15 @@ export class WeixinClient {
   async getUploadUrl(params: {
     filekey: string
     media_type: number
+    to_user_id: string
     rawsize: number
     rawfilemd5: string
     filesize: number
     aeskey: string
+    no_need_thumb?: boolean
+    thumb_rawsize?: number
+    thumb_rawfilemd5?: string
+    thumb_filesize?: number
   }): Promise<UploadUrlResponse> {
     // The actual v2.1.x server response shape is not publicly documented
     // and we've observed `ret=-2` with no errmsg — almost always a field-
