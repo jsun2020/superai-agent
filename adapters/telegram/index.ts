@@ -13,6 +13,10 @@ import { MessageDedup } from '../common/message-dedup.js'
 import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import {
+  buildComputerUseAllowResponse,
+  buildComputerUseDenyResponse,
+  type CuRequestForIm,
+  formatComputerUsePermissionRequest,
   formatImHelp,
   formatImStatus,
   formatPermissionRequest,
@@ -85,6 +89,10 @@ type ChatRuntimeState = {
   /** Last absolute filesystem path the assistant mentioned in this chat,
    *  remembered so /send_file with no argument can default to it. */
   lastMentionedFilePath?: string
+  /** Most-recent un-resolved Computer Use permission request, kept so the
+   *  callback handler can build the granted/denied response from the full
+   *  request (not just the requestId). */
+  lastCuRequest?: CuRequestForIm
 }
 
 // ---------- helpers ----------
@@ -424,6 +432,19 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       const keyboard = new InlineKeyboard()
         .text('✅ 允许', `permit:${msg.requestId}:yes`)
         .text('❌ 拒绝', `permit:${msg.requestId}:no`)
+      await bot.api.sendMessage(numericChatId, text, { reply_markup: keyboard })
+      break
+    }
+
+    case 'computer_use_permission_request': {
+      const request: CuRequestForIm = { ...(msg.request ?? {}), requestId: msg.requestId }
+      runtime.pendingPermissionCount += 1
+      runtime.state = 'permission_pending'
+      runtime.lastCuRequest = request
+      const text = formatComputerUsePermissionRequest(request)
+      const keyboard = new InlineKeyboard()
+        .text('✅ 允许', `cuper:${msg.requestId}:yes`)
+        .text('❌ 拒绝', `cuper:${msg.requestId}:no`)
       await bot.api.sendMessage(numericChatId, text, { reply_markup: keyboard })
       break
     }
@@ -819,8 +840,6 @@ bot.on(
 
 bot.on('callback_query:data', async (ctx) => {
   const data = ctx.callbackQuery.data
-  if (!data.startsWith('permit:')) return
-
   const parts = data.split(':')
   if (parts.length !== 3) return
 
@@ -828,18 +847,42 @@ bot.on('callback_query:data', async (ctx) => {
   const allowed = parts[2] === 'yes'
   const chatId = String(ctx.callbackQuery.message?.chat.id)
 
-  bridge.sendPermissionResponse(chatId, requestId, allowed)
-  const runtime = getRuntimeState(chatId)
-  runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+  if (data.startsWith('permit:')) {
+    bridge.sendPermissionResponse(chatId, requestId, allowed)
+    const runtime = getRuntimeState(chatId)
+    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
 
-  const statusText = allowed ? '✅ 已允许' : '❌ 已拒绝'
-  try {
-    await ctx.editMessageText(
-      ctx.callbackQuery.message?.text + `\n\n${statusText}`,
-    )
-  } catch { /* ignore */ }
+    const statusText = allowed ? '✅ 已允许' : '❌ 已拒绝'
+    try {
+      await ctx.editMessageText(
+        ctx.callbackQuery.message?.text + `\n\n${statusText}`,
+      )
+    } catch { /* ignore */ }
 
-  await ctx.answerCallbackQuery(statusText)
+    await ctx.answerCallbackQuery(statusText)
+    return
+  }
+
+  if (data.startsWith('cuper:')) {
+    const runtime = getRuntimeState(chatId)
+    const cuRequest = runtime.lastCuRequest
+    const payload = allowed && cuRequest
+      ? buildComputerUseAllowResponse(cuRequest)
+      : buildComputerUseDenyResponse()
+    bridge.sendComputerUsePermissionResponse(chatId, requestId, payload)
+    runtime.lastCuRequest = undefined
+    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+
+    const statusText = allowed ? '✅ 已授权 Computer Use' : '❌ 已拒绝'
+    try {
+      await ctx.editMessageText(
+        ctx.callbackQuery.message?.text + `\n\n${statusText}`,
+      )
+    } catch { /* ignore */ }
+
+    await ctx.answerCallbackQuery(statusText)
+    return
+  }
 })
 
 // ---------- start ----------

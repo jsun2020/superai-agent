@@ -19,6 +19,10 @@ import { MessageDedup } from '../common/message-dedup.js'
 import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import {
+  buildComputerUseAllowResponse,
+  buildComputerUseDenyResponse,
+  type CuRequestForIm,
+  formatComputerUsePermissionRequest,
   formatImHelp,
   formatImStatus,
   formatPermissionRequest,
@@ -92,6 +96,10 @@ type ChatRuntimeState = {
   /** Most-recent un-resolved permission request id, used so the user can
    *  reply with a plain "y" / "n" instead of typing the full id. */
   lastPermissionRequestId?: string
+  /** Most-recent un-resolved Computer Use permission request. The full
+   *  request payload is needed to construct the granted/denied response,
+   *  not just the requestId. */
+  lastCuRequest?: CuRequestForIm
   /** Most recent context_token from the user. Required by the WeChat
    *  send API to thread replies under the user-initiated session. */
   contextToken?: string
@@ -141,6 +149,7 @@ function clearTransientChatState(chatId: string): void {
   s.verb = undefined
   s.pendingPermissionCount = 0
   s.lastPermissionRequestId = undefined
+  s.lastCuRequest = undefined
   s.permitAllInTurn = false
   s.lastMentionedFilePath = undefined
 }
@@ -475,6 +484,28 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       break
     }
 
+    case 'computer_use_permission_request': {
+      const request = (msg.request ?? {}) as CuRequestForIm
+      runtime.pendingPermissionCount += 1
+      runtime.state = 'permission_pending'
+      runtime.lastCuRequest = { ...request, requestId: msg.requestId }
+      if (runtime.permitAllInTurn) {
+        bridge.sendComputerUsePermissionResponse(
+          chatId,
+          msg.requestId,
+          buildComputerUseAllowResponse(runtime.lastCuRequest),
+        )
+        runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+        runtime.lastCuRequest = undefined
+        break
+      }
+      const text =
+        formatComputerUsePermissionRequest(runtime.lastCuRequest) +
+        `\n\n${WECHAT_PERMISSION_HINT}`
+      await sendText(chatId, text)
+      break
+    }
+
     case 'message_complete': {
       runtime.state = 'idle'
       runtime.verb = undefined
@@ -529,41 +560,84 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
 function tryHandlePermissionShortcut(chatId: string, text: string): boolean {
   const runtime = getRuntimeState(chatId)
   const requestId = runtime.lastPermissionRequestId
-  if (!requestId) return false
+  const cuRequest = runtime.lastCuRequest
+  if (!requestId && !cuRequest) return false
   const trimmed = text.trim().toLowerCase()
 
   // Always-allow: pin a session rule via the existing rule='always' wire so
-  // the same tool stops prompting for the rest of this session.
+  // the same tool stops prompting for the rest of this session. Computer Use
+  // has no rule='always' equivalent — fall back to a plain allow.
   if (trimmed === 'ya' || trimmed === '永远' || trimmed === '永远允许' || trimmed === 'always') {
-    bridge.sendPermissionResponse(chatId, requestId, true, 'always')
-    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    runtime.lastPermissionRequestId = undefined
-    void sendText(chatId, '✅ 已允许，本会话内此工具不再询问')
-    return true
+    if (requestId) {
+      bridge.sendPermissionResponse(chatId, requestId, true, 'always')
+      runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+      runtime.lastPermissionRequestId = undefined
+      void sendText(chatId, '✅ 已允许，本会话内此工具不再询问')
+      return true
+    }
+    if (cuRequest) {
+      bridge.sendComputerUsePermissionResponse(
+        chatId,
+        cuRequest.requestId,
+        buildComputerUseAllowResponse(cuRequest),
+      )
+      runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+      runtime.lastCuRequest = undefined
+      void sendText(chatId, '✅ 已允许（Computer Use 无永久授权，仍按单次处理）')
+      return true
+    }
   }
 
   // Per-turn auto-approve: allow the current request and silently accept
   // every subsequent permission_request until message_complete.
   if (trimmed === 'ys' || trimmed === '本轮' || trimmed === '本轮允许' || trimmed === 'session') {
-    bridge.sendPermissionResponse(chatId, requestId, true)
+    if (requestId) {
+      bridge.sendPermissionResponse(chatId, requestId, true)
+      runtime.lastPermissionRequestId = undefined
+    }
+    if (cuRequest) {
+      bridge.sendComputerUsePermissionResponse(
+        chatId,
+        cuRequest.requestId,
+        buildComputerUseAllowResponse(cuRequest),
+      )
+      runtime.lastCuRequest = undefined
+    }
     runtime.permitAllInTurn = true
     runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    runtime.lastPermissionRequestId = undefined
     void sendText(chatId, '✅ 本轮后续操作将自动允许')
     return true
   }
 
   if (trimmed === 'y' || trimmed === 'yes' || trimmed === '允许' || trimmed === '1') {
-    bridge.sendPermissionResponse(chatId, requestId, true)
+    if (requestId) {
+      bridge.sendPermissionResponse(chatId, requestId, true)
+      runtime.lastPermissionRequestId = undefined
+    } else if (cuRequest) {
+      bridge.sendComputerUsePermissionResponse(
+        chatId,
+        cuRequest.requestId,
+        buildComputerUseAllowResponse(cuRequest),
+      )
+      runtime.lastCuRequest = undefined
+    }
     runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    runtime.lastPermissionRequestId = undefined
     void sendText(chatId, '✅ 已允许')
     return true
   }
   if (trimmed === 'n' || trimmed === 'no' || trimmed === '拒绝' || trimmed === '2') {
-    bridge.sendPermissionResponse(chatId, requestId, false)
+    if (requestId) {
+      bridge.sendPermissionResponse(chatId, requestId, false)
+      runtime.lastPermissionRequestId = undefined
+    } else if (cuRequest) {
+      bridge.sendComputerUsePermissionResponse(
+        chatId,
+        cuRequest.requestId,
+        buildComputerUseDenyResponse(),
+      )
+      runtime.lastCuRequest = undefined
+    }
     runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    runtime.lastPermissionRequestId = undefined
     void sendText(chatId, '❌ 已拒绝')
     return true
   }

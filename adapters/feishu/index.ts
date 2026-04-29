@@ -16,6 +16,10 @@ import { StreamingCard } from './streaming-card.js'
 import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import {
+  buildComputerUseAllowResponse,
+  buildComputerUseDenyResponse,
+  type CuRequestForIm,
+  formatComputerUsePermissionRequest,
   formatImHelp,
   formatImStatus,
   splitMessage,
@@ -90,6 +94,10 @@ type ChatRuntimeState = {
   /** Last absolute filesystem path the assistant mentioned in this chat,
    *  remembered so /send_file with no argument can default to it. */
   lastMentionedFilePath?: string
+  /** Most-recent un-resolved Computer Use permission request, kept so the
+   *  card-action handler can build the granted/denied response from the full
+   *  request (not just the requestId). */
+  lastCuRequest?: CuRequestForIm
 }
 
 // ---------- helpers ----------
@@ -688,6 +696,66 @@ function buildPermissionCard(
   }
 }
 
+function buildComputerUsePermissionCard(
+  request: CuRequestForIm,
+): Record<string, unknown> {
+  const body = formatComputerUsePermissionRequest(request)
+  const elements: Record<string, unknown>[] = [
+    { tag: 'markdown', content: '```\n' + body + '\n```' },
+    { tag: 'hr', margin: '12px 0 0 0' },
+    {
+      tag: 'column_set',
+      flex_mode: 'stretch',
+      horizontal_spacing: '8px',
+      margin: '8px 0 0 0',
+      columns: [
+        {
+          tag: 'column',
+          width: 'weighted',
+          weight: 1,
+          vertical_align: 'center',
+          elements: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '✅ 允许' },
+              type: 'primary',
+              size: 'medium',
+              value: { action: 'cu_permit', requestId: request.requestId, allowed: true },
+            },
+          ],
+        },
+        {
+          tag: 'column',
+          width: 'weighted',
+          weight: 1,
+          vertical_align: 'center',
+          elements: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '❌ 拒绝' },
+              type: 'danger',
+              size: 'medium',
+              value: { action: 'cu_permit', requestId: request.requestId, allowed: false },
+            },
+          ],
+        },
+      ],
+    },
+  ]
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: false, update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: '🖥️ Computer Use 授权' },
+      subtitle: { tag: 'plain_text', content: '需要控制本机应用' },
+      template: 'orange',
+      padding: '12px 12px 12px 12px',
+      icon: { tag: 'standard_icon', token: 'lock-chat_filled' },
+    },
+    body: { elements },
+  }
+}
+
 // ---------- session management ----------
 
 async function ensureSession(chatId: string): Promise<boolean> {
@@ -915,6 +983,16 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
         msg.requestId,
         stored?.workDir,
       )
+      await sendCard(chatId, card)
+      break
+    }
+
+    case 'computer_use_permission_request': {
+      const request: CuRequestForIm = { ...(msg.request ?? {}), requestId: msg.requestId }
+      runtime.pendingPermissionCount += 1
+      runtime.state = 'permission_pending'
+      runtime.lastCuRequest = request
+      const card = buildComputerUsePermissionCard(request)
       await sendCard(chatId, card)
       break
     }
@@ -1263,6 +1341,25 @@ async function handleCardAction(data: any): Promise<any> {
       : '❌ 已拒绝'
     await sendText(chatId, statusText)
     return { toast: { type: 'info', content: allowed ? (rule === 'always' ? '♾️ 永久允许' : '✅ 已允许') : '❌ 已拒绝' } }
+  }
+
+  if (action === 'cu_permit') {
+    const requestId = event.action?.value?.requestId
+    const allowed = event.action?.value?.allowed ?? false
+    if (!requestId) return
+
+    const runtime = getRuntimeState(chatId)
+    const cuRequest = runtime.lastCuRequest
+    const payload = allowed && cuRequest
+      ? buildComputerUseAllowResponse(cuRequest)
+      : buildComputerUseDenyResponse()
+    bridge.sendComputerUsePermissionResponse(chatId, requestId, payload)
+    runtime.lastCuRequest = undefined
+    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
+
+    const statusText = allowed ? '✅ 已授权 Computer Use' : '❌ 已拒绝'
+    await sendText(chatId, statusText)
+    return { toast: { type: 'info', content: statusText } }
   }
 
   if (action === 'pick_project') {

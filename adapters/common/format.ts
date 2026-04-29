@@ -146,6 +146,129 @@ export function formatPermissionRequest(toolName: string, input: unknown, reques
   return `🔐 需要权限确认 [${requestId}]\n工具: ${toolName}\n${preview}`
 }
 
+/** Subset of `ComputerUsePermissionRequest` (src/server/ws/events.ts) that the
+ *  IM adapters actually care about. Keep in sync if the server-side type grows
+ *  new fields the user must approve. */
+export type CuRequestForIm = {
+  requestId: string
+  reason?: string
+  apps?: Array<{
+    requestedName?: string
+    resolved?: { bundleId?: string; displayName?: string }
+    isSentinel?: boolean
+    alreadyGranted?: boolean
+    proposedTier?: 'read' | 'click' | 'full'
+  }>
+  requestedFlags?: {
+    clipboardRead?: boolean
+    clipboardWrite?: boolean
+    systemKeyCombos?: boolean
+  }
+  willHide?: Array<{ bundleId?: string; displayName?: string }>
+}
+
+/** Render a Computer Use permission request as a Chinese plain-text prompt
+ *  suitable for WeChat / Telegram (and as the body for Feishu's card view).
+ *  Lists the apps the model wants to drive plus any extra capabilities
+ *  (clipboard, system key combos). */
+export function formatComputerUsePermissionRequest(
+  request: CuRequestForIm,
+): string {
+  const lines: string[] = []
+  lines.push(`🖥️ 需要 Computer Use 授权 [${request.requestId}]`)
+  if (request.reason && request.reason.trim()) {
+    lines.push(`原因: ${truncate(request.reason.trim(), 200)}`)
+  }
+  const apps = request.apps ?? []
+  if (apps.length > 0) {
+    lines.push('请求控制以下应用:')
+    for (const app of apps) {
+      const name =
+        app.resolved?.displayName ||
+        app.requestedName ||
+        app.resolved?.bundleId ||
+        '(未知应用)'
+      const tierLabel = app.proposedTier
+        ? { read: '只读', click: '点击', full: '完全控制' }[app.proposedTier]
+        : ''
+      const installed = app.resolved ? '' : ' ⚠️ 未安装'
+      const already = app.alreadyGranted ? ' ✅ 已授权' : ''
+      const tier = tierLabel ? ` · ${tierLabel}` : ''
+      lines.push(`  • ${name}${tier}${installed}${already}`)
+    }
+  }
+  const flags = request.requestedFlags ?? {}
+  const flagLabels: string[] = []
+  if (flags.clipboardRead) flagLabels.push('读取剪贴板')
+  if (flags.clipboardWrite) flagLabels.push('写入剪贴板')
+  if (flags.systemKeyCombos) flagLabels.push('系统快捷键')
+  if (flagLabels.length > 0) {
+    lines.push(`额外权限: ${flagLabels.join('、')}`)
+  }
+  const willHide = request.willHide ?? []
+  if (willHide.length > 0) {
+    const names = willHide
+      .map((w) => w.displayName || w.bundleId || '?')
+      .join('、')
+    lines.push(`执行期间将隐藏: ${names}`)
+  }
+  return lines.join('\n')
+}
+
+/** Build a `ComputerUsePermissionResponse` payload that grants every app the
+ *  request mentioned (mirrors `buildAllowResponse` in the desktop modal at
+ *  desktop/src/components/chat/ComputerUsePermissionModal.tsx). Apps that
+ *  failed to resolve become `denied: not_installed`. Requested flags are
+ *  passed through verbatim so the model gets exactly the capabilities it
+ *  asked for. */
+export function buildComputerUseAllowResponse(
+  request: CuRequestForIm,
+): Record<string, unknown> {
+  const now = Date.now()
+  const granted: Array<Record<string, unknown>> = []
+  const denied: Array<Record<string, unknown>> = []
+  for (const app of request.apps ?? []) {
+    if (app.resolved && !app.alreadyGranted) {
+      granted.push({
+        bundleId: app.resolved.bundleId,
+        displayName: app.resolved.displayName,
+        grantedAt: now,
+        tier: app.proposedTier,
+      })
+    } else if (!app.resolved) {
+      denied.push({
+        bundleId: app.requestedName,
+        reason: 'not_installed',
+      })
+    }
+  }
+  const flags = {
+    clipboardRead: request.requestedFlags?.clipboardRead === true,
+    clipboardWrite: request.requestedFlags?.clipboardWrite === true,
+    systemKeyCombos: request.requestedFlags?.systemKeyCombos === true,
+  }
+  return {
+    granted,
+    denied,
+    flags,
+    userConsented: true,
+  }
+}
+
+/** Build a `ComputerUsePermissionResponse` payload that denies the request. */
+export function buildComputerUseDenyResponse(): Record<string, unknown> {
+  return {
+    granted: [],
+    denied: [],
+    flags: {
+      clipboardRead: false,
+      clipboardWrite: false,
+      systemKeyCombos: false,
+    },
+    userConsented: false,
+  }
+}
+
 /** Inline hint listing every shortcut accepted by the WeChat permission
  *  handler. Kept centralised so the prompt and /help stay in sync. */
 export const WECHAT_PERMISSION_HINT =

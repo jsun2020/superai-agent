@@ -103,6 +103,22 @@ export class WsBridge {
     return this.send(chatId, message)
   }
 
+  /** Respond to a Computer Use permission request. The server-side
+   *  computerUseApprovalService is keyed off requestId; the response payload
+   *  shape mirrors `ComputerUsePermissionResponse` in src/server/ws/events.ts
+   *  (granted apps, denied apps, grant flags, userConsented). */
+  sendComputerUsePermissionResponse(
+    chatId: string,
+    requestId: string,
+    response: Record<string, unknown>,
+  ): boolean {
+    return this.send(chatId, {
+      type: 'computer_use_permission_response',
+      requestId,
+      response,
+    })
+  }
+
   /** Stop the current generation. */
   sendStopGeneration(chatId: string): boolean {
     return this.send(chatId, { type: 'stop_generation' })
