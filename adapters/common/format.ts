@@ -274,6 +274,37 @@ export function buildComputerUseDenyResponse(): Record<string, unknown> {
 export const WECHAT_PERMISSION_HINT =
   '回复 `y` 允许一次，`n` 拒绝；`ya` 始终允许该工具；`ys` 本轮全部允许。'
 
+/** One-time guidance prepended to the first user message of a fresh IM
+ *  session, telling the model how to deliver files back through the IM
+ *  channel. The IM adapters watch the assistant's streaming text for
+ *  markdown image references (![](...)) and auto-upload the referenced
+ *  file — but the model has no way to know this convention exists, so
+ *  without this hint it tends to give up with "I can't send files."
+ *
+ *  Kept compact: a single fenced "context" block that's clearly an
+ *  out-of-band system note rather than user content. */
+export const IM_FILE_DELIVERY_HINT =
+  [
+    '[IM context — read once, do not echo]',
+    'You are talking to the user over an IM channel (WeChat / Feishu / Telegram).',
+    'To deliver an image or file to the user, embed it in your reply as a markdown image:',
+    '  ![brief description](ABSOLUTE_PATH)',
+    'Examples that work:',
+    '  ![screenshot](C:/Users/me/AppData/Local/Temp/claude/foo.png)',
+    '  ![screenshot](/tmp/foo.png)',
+    '  ![screenshot](file:///C:/Users/me/foo.png)',
+    'The IM adapter watches your output stream for these and uploads the file',
+    'to the chat automatically. Use absolute paths only (no %TEMP% etc.).',
+    'For non-image files, tell the user the absolute path and they can reply',
+    '"/send_file" or "把文件发给我" to receive it.',
+  ].join('\n')
+
+/** Wrap a user-typed message so the model receives the IM-delivery hint
+ *  ahead of it, while still treating the user's text as the actual prompt. */
+export function prependImFileDeliveryHint(userText: string): string {
+  return `${IM_FILE_DELIVERY_HINT}\n\n---\n\n${userText}`
+}
+
 /** Truncate tool input to a preview string. */
 export function truncateInput(input: unknown, maxLen: number): string {
   try {

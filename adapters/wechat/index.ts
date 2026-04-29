@@ -26,6 +26,7 @@ import {
   formatImHelp,
   formatImStatus,
   formatPermissionRequest,
+  prependImFileDeliveryHint,
   splitMessage,
   WECHAT_PERMISSION_HINT,
 } from '../common/format.js'
@@ -111,6 +112,10 @@ type ChatRuntimeState = {
    *  captured from streamed text. Used as the default target for
    *  /send_file when the user invokes it without an argument. */
   lastMentionedFilePath?: string
+  /** Have we already prepended IM_FILE_DELIVERY_HINT to a user message
+   *  in this chat? One injection per session is enough — the model sees
+   *  it on turn 1 and remembers via the conversation transcript. */
+  imHintSent: boolean
 }
 
 const runtimeStates = new Map<string, ChatRuntimeState>()
@@ -126,7 +131,12 @@ let pauseUntil = 0
 function getRuntimeState(chatId: string): ChatRuntimeState {
   let s = runtimeStates.get(chatId)
   if (!s) {
-    s = { state: 'idle', pendingPermissionCount: 0, permitAllInTurn: false }
+    s = {
+      state: 'idle',
+      pendingPermissionCount: 0,
+      permitAllInTurn: false,
+      imHintSent: false,
+    }
     runtimeStates.set(chatId, s)
   }
   return s
@@ -152,6 +162,7 @@ function clearTransientChatState(chatId: string): void {
   s.lastCuRequest = undefined
   s.permitAllInTurn = false
   s.lastMentionedFilePath = undefined
+  s.imHintSent = false
 }
 
 // ---------- send helpers ----------
@@ -830,7 +841,15 @@ async function handleInboundMessage(msg: WeixinMessage): Promise<void> {
     const effective = msgText || (attachments && attachments.length > 0 ? '(用户发送了附件)' : '')
     if (!effective && !(attachments && attachments.length > 0)) return
 
-    const sent = bridge.sendUserMessage(chatId, effective, attachments)
+    // First user message in this chat? Prepend the IM file-delivery hint so
+    // the model knows it can ship files back via markdown image syntax.
+    let outbound = effective
+    if (!runtime.imHintSent) {
+      outbound = prependImFileDeliveryHint(effective)
+      runtime.imHintSent = true
+    }
+
+    const sent = bridge.sendUserMessage(chatId, outbound, attachments)
     if (!sent) {
       await sendText(chatId, '⚠️ 消息发送失败，连接可能已断开。请发送 /new 重新开始。')
     }

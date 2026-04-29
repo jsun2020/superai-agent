@@ -22,6 +22,7 @@ import {
   formatComputerUsePermissionRequest,
   formatImHelp,
   formatImStatus,
+  prependImFileDeliveryHint,
   splitMessage,
 } from '../common/format.js'
 import { SessionStore } from '../common/session-store.js'
@@ -98,6 +99,9 @@ type ChatRuntimeState = {
    *  card-action handler can build the granted/denied response from the full
    *  request (not just the requestId). */
   lastCuRequest?: CuRequestForIm
+  /** Whether the IM file-delivery hint has been prepended to a user
+   *  message in this chat yet. One injection per session is enough. */
+  imHintSent: boolean
 }
 
 // ---------- helpers ----------
@@ -105,7 +109,7 @@ type ChatRuntimeState = {
 function getRuntimeState(chatId: string): ChatRuntimeState {
   let state = runtimeStates.get(chatId)
   if (!state) {
-    state = { state: 'idle', pendingPermissionCount: 0 }
+    state = { state: 'idle', pendingPermissionCount: 0, imHintSent: false }
     runtimeStates.set(chatId, state)
   }
   return state
@@ -258,6 +262,7 @@ function clearTransientChatState(chatId: string): void {
   runtime.state = 'idle'
   runtime.verb = undefined
   runtime.pendingPermissionCount = 0
+  runtime.imHintSent = false
 }
 
 async function ensureExistingSession(chatId: string): Promise<{ sessionId: string; workDir: string } | null> {
@@ -1297,7 +1302,16 @@ async function handleMessage(data: any): Promise<void> {
       console.error('[Feishu] pre-create streaming card failed:', err)
     })
 
-    const sent = bridge.sendUserMessage(chatId, effectiveText, attachments)
+    // First user message in this chat? Prepend the IM file-delivery hint so
+    // the model knows it can ship files back via markdown image syntax.
+    const runtime = getRuntimeState(chatId)
+    let outbound = effectiveText
+    if (!runtime.imHintSent) {
+      outbound = prependImFileDeliveryHint(effectiveText)
+      runtime.imHintSent = true
+    }
+
+    const sent = bridge.sendUserMessage(chatId, outbound, attachments)
     if (!sent) {
       await sendText(chatId, '⚠️ 消息发送失败，连接可能已断开。请发送 /new 重新开始。')
     }

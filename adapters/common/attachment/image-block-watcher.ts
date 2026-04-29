@@ -12,7 +12,10 @@
 import type { PendingUpload } from './attachment-types.js'
 
 // Matches a complete markdown image: ![alt](target)
-// `alt` may be empty; `target` stops at the first closing paren.
+// `alt` may be empty; `target` stops at the first closing paren OR whitespace
+// (markdown allows `![alt](url "title")`, but we don't accept titles — they
+// are rare in tool output, and the simpler form keeps Windows paths safe
+// because backslashes are not whitespace).
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g
 
 function fingerprint(raw: string): string {
@@ -23,6 +26,11 @@ function fingerprint(raw: string): string {
   return (h >>> 0).toString(16)
 }
 
+// Windows absolute path: drive letter + (\ or /) + rest. Match either
+// `C:\Users\...\foo.png` or `C:/Users/.../foo.png` — Claude routinely emits
+// the forward-slash form on Windows, and either is a valid absolute path.
+const WIN_ABS_PATH_RE = /^[A-Za-z]:[\\/]/
+
 function classify(target: string): PendingUpload['source'] | null {
   if (target.startsWith('data:')) {
     const m = /^data:([^;,]+);base64,(.+)$/.exec(target)
@@ -30,12 +38,16 @@ function classify(target: string): PendingUpload['source'] | null {
     return { kind: 'base64', mime: m[1]!, data: m[2]! }
   }
   if (target.startsWith('file://')) {
-    return { kind: 'path', path: target.slice('file://'.length) }
+    // file:///C:/foo  — strip the "file://" then also the leading "/" before
+    // a drive letter so fs.readFile gets `C:/foo` not `/C:/foo` on Windows.
+    let stripped = target.slice('file://'.length)
+    if (/^\/[A-Za-z]:[\\/]/.test(stripped)) stripped = stripped.slice(1)
+    return { kind: 'path', path: stripped }
   }
   if (target.startsWith('http://') || target.startsWith('https://')) {
     return { kind: 'url', url: target }
   }
-  if (target.startsWith('/')) {
+  if (target.startsWith('/') || WIN_ABS_PATH_RE.test(target)) {
     return { kind: 'path', path: target }
   }
   return null // relative paths — skip, we can't resolve them safely

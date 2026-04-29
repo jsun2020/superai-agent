@@ -8,9 +8,11 @@
 
 /** Match the last absolute filesystem path that looks like a real file
  *  (has an extension) inside a string. Handles Windows backslash paths
- *  ("C:\foo\bar.pptx") and POSIX paths ("/home/user/x.pdf"). */
+ *  ("C:\foo\bar.pptx"), Windows forward-slash paths ("C:/foo/bar.pptx" —
+ *  Claude routinely emits this form on Windows) and POSIX paths
+ *  ("/home/user/x.pdf"). */
 export const FILE_PATH_REGEX =
-  /([A-Za-z]:\\[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8}|\/[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8})/g
+  /([A-Za-z]:[\\/][^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8}|\/[^\s"'<>|*?\n\r]+\.[A-Za-z0-9]{1,8})/g
 
 export function extractLastFilePath(text: string): string | undefined {
   const matches = text.match(FILE_PATH_REGEX)
