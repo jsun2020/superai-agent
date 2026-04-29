@@ -659,10 +659,12 @@ async function sendFileToUser(chatId: string, filePath: string): Promise<void> {
   try {
     buffer = await fs.readFile(filePath)
   } catch (err) {
-    await bot.api.sendMessage(
-      numericChatId,
-      `❌ 无法读取文件: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    const msg = err instanceof Error ? err.message : String(err)
+    const isMissing = /ENOENT|no such file/i.test(msg)
+    const hint = isMissing
+      ? '\n💡 文件不存在。Claude 有时会编造看似合理的路径——发送 "请用 Read 工具确认这个截图真的存在，再用 ![](绝对路径) 把它发给我" 让它重试。'
+      : ''
+    await bot.api.sendMessage(numericChatId, `❌ 无法读取文件: ${msg}${hint}`)
     return
   }
   const fileName = path.basename(filePath)
