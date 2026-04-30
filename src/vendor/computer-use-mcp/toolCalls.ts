@@ -2051,6 +2051,19 @@ async function persistScreenshotToTmp(
   }
 }
 
+/** In-band reminder appended to model-initiated screenshot/zoom results
+ *  when `save_to_disk` was not set. The session-start IM hint is easy for the
+ *  model to forget by the time it actually calls screenshot, so each result
+ *  re-states the option right next to where the decision is made. Internal
+ *  piggyback callers (args === undefined) never see this. */
+const SAVE_TO_DISK_HINT_TEXT =
+  "Note: this image is visible to you only — no file was written to disk. " +
+  "If the user asked you to send / share / deliver / 发给我 the screenshot, " +
+  "call this tool again with `save_to_disk: true`. The next result will " +
+  "include a `Saved screenshot to: <absolute path>` line — embed that path " +
+  "in a markdown image (`![screenshot](<absolute path>)`) in your reply so " +
+  "the IM adapter can upload it.";
+
 async function handleScreenshot(
   adapter: ComputerUseHostAdapter,
   args: Record<string, unknown> | undefined,
@@ -2161,6 +2174,7 @@ async function handleScreenshot(
       args?.save_to_disk === true
         ? await persistScreenshotToTmp(shot.base64, "screenshot", adapter.logger)
         : null;
+    const showSaveHint = args !== undefined && args.save_to_disk !== true;
 
     return {
       content: [
@@ -2173,6 +2187,9 @@ async function handleScreenshot(
         },
         ...(savedPath
           ? [{ type: "text" as const, text: `Saved screenshot to: ${savedPath}` }]
+          : []),
+        ...(showSaveHint
+          ? [{ type: "text" as const, text: SAVE_TO_DISK_HINT_TEXT }]
           : []),
       ],
       screenshot: shot,
@@ -2236,6 +2253,7 @@ async function handleScreenshot(
     args?.save_to_disk === true
       ? await persistScreenshotToTmp(shot.base64, "screenshot", adapter.logger)
       : null;
+  const showSaveHint = args !== undefined && args.save_to_disk !== true;
 
   return {
     content: [
@@ -2248,6 +2266,9 @@ async function handleScreenshot(
       },
       ...(savedPath
         ? [{ type: "text" as const, text: `Saved screenshot to: ${savedPath}` }]
+        : []),
+      ...(showSaveHint
+        ? [{ type: "text" as const, text: SAVE_TO_DISK_HINT_TEXT }]
         : []),
     ],
     // Piggybacked for serverDef.ts to stash on InternalServerContext.
@@ -2328,6 +2349,9 @@ async function handleZoom(
     args.save_to_disk === true
       ? await persistScreenshotToTmp(zoomed.base64, "zoom", adapter.logger)
       : null;
+  // Zoom is always model-initiated (no internal piggyback), so the hint
+  // applies whenever save_to_disk wasn't set.
+  const showSaveHint = args.save_to_disk !== true;
 
   // Return the image. NO `.screenshot` piggyback — this is the invariant.
   return {
@@ -2335,6 +2359,9 @@ async function handleZoom(
       { type: "image", data: zoomed.base64, mimeType: "image/jpeg" },
       ...(savedPath
         ? [{ type: "text" as const, text: `Saved zoom to: ${savedPath}` }]
+        : []),
+      ...(showSaveHint
+        ? [{ type: "text" as const, text: SAVE_TO_DISK_HINT_TEXT }]
         : []),
     ],
   };
