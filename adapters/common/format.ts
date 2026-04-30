@@ -310,6 +310,14 @@ export const IM_FILE_DELIVERY_HINT =
     '',
     'For non-image files, tell the user the absolute path and they can reply',
     '"/send_file" or "把文件发给我" to receive it.',
+    '',
+    'Computer Use screenshots: when the user wants the screenshot delivered,',
+    'pass `save_to_disk: true` to the screenshot/zoom tool. The tool result',
+    'will include a "Saved screenshot to: <absolute path>" line — copy that',
+    'path verbatim into a markdown image (`![screenshot](<absolute path>)`)',
+    'in your reply. Without `save_to_disk: true` the screenshot exists only',
+    'as inline image content for YOU to look at, with no path the IM adapter',
+    'can upload.',
   ].join('\n')
 
 /** Wrap a user-typed message so the model receives the IM-delivery hint

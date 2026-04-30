@@ -36,6 +36,9 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { getDefaultTierForApp, getDeniedCategoryForApp, isPolicyDenied } from "./deniedApps.js";
 import type {
@@ -1752,7 +1755,10 @@ async function appendTeachScreenshot(
   overrides: ComputerUseOverrides,
   subGates: CuSubGates,
 ): Promise<CuCallToolResult> {
-  const shotResult = await handleScreenshot(adapter, overrides, subGates);
+  // Internal piggyback after a teach action — the model didn't request this
+  // screenshot, so don't write it to disk regardless of any user save_to_disk
+  // flag on the originating tool call.
+  const shotResult = await handleScreenshot(adapter, undefined, overrides, subGates);
   if (shotResult.isError) {
     // Hide+screenshot failed (rare — e.g. SCContentFilter error). Don't
     // tank the step; just omit the image. Model will call screenshot
@@ -2017,8 +2023,37 @@ async function buildMonitorNote(
   return undefined;
 }
 
+/**
+ * Persist a screenshot's JPEG bytes to a temp file so the assistant can hand
+ * the absolute path back to the user (e.g. via `![](path)` markdown for the
+ * IM adapters' auto-upload watcher). Only invoked when the model passes
+ * `save_to_disk: true` — internal piggyback paths skip this entirely.
+ *
+ * Returns `null` on any IO failure: the screenshot itself is still valid and
+ * we'd rather drop the path-text addendum than fail the whole tool call.
+ */
+async function persistScreenshotToTmp(
+  base64: string,
+  kind: "screenshot" | "zoom",
+  logger: Logger,
+): Promise<string | null> {
+  try {
+    const dir = join(tmpdir(), "claude-cu-screenshots");
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, `${kind}-${Date.now()}-${randomUUID().slice(0, 8)}.jpg`);
+    await writeFile(file, Buffer.from(base64, "base64"));
+    return file;
+  } catch (err) {
+    logger.warn(
+      `[computer-use] persistScreenshotToTmp failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
+}
+
 async function handleScreenshot(
   adapter: ComputerUseHostAdapter,
+  args: Record<string, unknown> | undefined,
   overrides: ComputerUseOverrides,
   subGates: CuSubGates,
 ): Promise<CuCallToolResult> {
@@ -2122,6 +2157,11 @@ async function handleScreenshot(
       overrides.onDisplayPinned !== undefined,
     );
 
+    const savedPath =
+      args?.save_to_disk === true
+        ? await persistScreenshotToTmp(shot.base64, "screenshot", adapter.logger)
+        : null;
+
     return {
       content: [
         ...(monitorNote ? [{ type: "text" as const, text: monitorNote }] : []),
@@ -2131,6 +2171,9 @@ async function handleScreenshot(
           data: shot.base64,
           mimeType: "image/jpeg",
         },
+        ...(savedPath
+          ? [{ type: "text" as const, text: `Saved screenshot to: ${savedPath}` }]
+          : []),
       ],
       screenshot: shot,
     };
@@ -2189,6 +2232,11 @@ async function handleScreenshot(
     overrides.onDisplayPinned !== undefined,
   );
 
+  const savedPath =
+    args?.save_to_disk === true
+      ? await persistScreenshotToTmp(shot.base64, "screenshot", adapter.logger)
+      : null;
+
   return {
     content: [
       ...(monitorNote ? [{ type: "text" as const, text: monitorNote }] : []),
@@ -2198,6 +2246,9 @@ async function handleScreenshot(
         data: shot.base64,
         mimeType: "image/jpeg",
       },
+      ...(savedPath
+        ? [{ type: "text" as const, text: `Saved screenshot to: ${savedPath}` }]
+        : []),
     ],
     // Piggybacked for serverDef.ts to stash on InternalServerContext.
     screenshot: shot,
@@ -2273,9 +2324,19 @@ async function handleZoom(
     last.displayId,
   );
 
+  const savedPath =
+    args.save_to_disk === true
+      ? await persistScreenshotToTmp(zoomed.base64, "zoom", adapter.logger)
+      : null;
+
   // Return the image. NO `.screenshot` piggyback — this is the invariant.
   return {
-    content: [{ type: "image", data: zoomed.base64, mimeType: "image/jpeg" }],
+    content: [
+      { type: "image", data: zoomed.base64, mimeType: "image/jpeg" },
+      ...(savedPath
+        ? [{ type: "text" as const, text: `Saved zoom to: ${savedPath}` }]
+        : []),
+    ],
   };
 }
 
@@ -3384,7 +3445,7 @@ async function dispatchAction(
 ): Promise<CuCallToolResult> {
   switch (name) {
     case "screenshot":
-      return handleScreenshot(adapter, overrides, subGates);
+      return handleScreenshot(adapter, a, overrides, subGates);
 
     case "zoom":
       return handleZoom(adapter, a, overrides);
