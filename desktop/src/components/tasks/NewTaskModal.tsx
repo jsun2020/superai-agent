@@ -71,6 +71,8 @@ export function NewTaskModal({ open, onClose, editTask }: Props) {
     && ((adapterConfig.feishu?.pairedUsers?.length ?? 0) > 0 || (adapterConfig.feishu?.allowedUsers?.length ?? 0) > 0))
   const isTelegramConfigured = !!(adapterConfig.telegram?.botToken
     && ((adapterConfig.telegram?.pairedUsers?.length ?? 0) > 0 || (adapterConfig.telegram?.allowedUsers?.length ?? 0) > 0))
+  const isWechatConfigured = !!(adapterConfig.wechat?.accountId
+    && ((adapterConfig.wechat?.pairedUsers?.length ?? 0) > 0 || (adapterConfig.wechat?.allowedUsers?.length ?? 0) > 0))
 
   const isEdit = !!editTask
   const parsed = editTask ? parseCron(editTask.cron) : null
@@ -95,7 +97,7 @@ export function NewTaskModal({ open, onClose, editTask }: Props) {
   const [folderPath, setFolderPath] = useState(editTask?.folderPath || defaultWorkDir)
   const [useWorktree, setUseWorktree] = useState(editTask?.useWorktree || false)
   const [notifyEnabled, setNotifyEnabled] = useState(editTask?.notification?.enabled || false)
-  const [notifyChannels, setNotifyChannels] = useState<('telegram' | 'feishu')[]>(editTask?.notification?.channels || [])
+  const [notifyChannels, setNotifyChannels] = useState<('telegram' | 'feishu' | 'wechat')[]>(editTask?.notification?.channels || [])
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Enhanced scheduling state
@@ -376,8 +378,25 @@ export function NewTaskModal({ open, onClose, editTask }: Props) {
                     <span className="text-[10px] text-[var(--color-warning)]">{t('newTask.notConfigured')}</span>
                   )}
                 </label>
+                <label className={`flex items-center gap-2 ${isWechatConfigured ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+                  <input
+                    type="checkbox"
+                    checked={notifyChannels.includes('wechat')}
+                    disabled={!isWechatConfigured}
+                    onChange={(e) => {
+                      setNotifyChannels((prev) =>
+                        e.target.checked ? [...prev, 'wechat'] : prev.filter((c) => c !== 'wechat'),
+                      )
+                    }}
+                    className="w-3.5 h-3.5 rounded border-[var(--color-border)] accent-[var(--color-brand)]"
+                  />
+                  <span className="text-sm text-[var(--color-text-primary)]">{t('settings.adapters.wechat')}</span>
+                  {!isWechatConfigured && (
+                    <span className="text-[10px] text-[var(--color-warning)]">{t('newTask.notConfigured')}</span>
+                  )}
+                </label>
               </div>
-              {!isFeishuConfigured && !isTelegramConfigured && (
+              {!isFeishuConfigured && !isTelegramConfigured && !isWechatConfigured && (
                 <p className="text-xs text-[var(--color-warning)]">
                   <span className="material-symbols-outlined text-[12px] align-middle mr-1">warning</span>
                   {t('newTask.noChannelConfigured')}

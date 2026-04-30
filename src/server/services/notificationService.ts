@@ -8,6 +8,8 @@
 import { adapterService, type AdapterFileConfig } from './adapterService.js'
 import type { TaskRun } from './cronScheduler.js'
 import type { TaskNotificationConfig } from './cronService.js'
+import { WeixinClient } from '../../../adapters/wechat/client.js'
+import { loadAccount } from '../../../adapters/wechat/account-store.js'
 
 // ─── Message formatting ──────────────────────────────────────────────────────
 
@@ -218,6 +220,48 @@ async function sendFeishu(
   }
 }
 
+// ─── WeChat ───────────────────────────────────────────────────────────────────
+
+const WECHAT_TEXT_LIMIT = 3500
+
+/**
+ * Send a plain-text WeChat notification using the configured ilink-bot
+ * account credentials persisted under ~/.claude/wechat-accounts/<id>.json.
+ *
+ * Server-initiated push has no contextToken (unlike the per-conversation
+ * runtime path in adapters/wechat/index.ts), so we omit it. The ilink-bot
+ * sendmessage endpoint accepts that for bot-initiated messages.
+ */
+async function sendWechat(
+  accountId: string,
+  toUserId: string,
+  text: string,
+): Promise<void> {
+  const account = loadAccount(accountId)
+  if (!account) {
+    console.warn(`[Notification] WeChat account ${accountId} not found, skipping`)
+    return
+  }
+  const trimmed = text.length > WECHAT_TEXT_LIMIT
+    ? text.slice(0, WECHAT_TEXT_LIMIT) + '…'
+    : text
+
+  const client = new WeixinClient(account.baseUrl, account.token)
+  try {
+    const resp = await client.sendMessage({
+      to_user_id: toUserId,
+      item_list: [{ type: 1, text_item: { text: trimmed } }],
+    })
+    if ((resp.ret != null && resp.ret !== 0) || (resp.errcode != null && resp.errcode !== 0)) {
+      console.error(
+        `[Notification] WeChat sendMessage ret=${resp.ret} errcode=${resp.errcode} ${resp.errmsg ?? ''}`,
+      )
+    }
+  } catch (err) {
+    console.error('[Notification] WeChat send error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function sendTaskNotification(
@@ -269,6 +313,21 @@ export async function sendTaskNotification(
         ]
         for (const user of users) {
           await sendFeishu(token, String(user.userId), run)
+        }
+      }
+
+      if (channel === 'wechat') {
+        const accountId = config.wechat?.accountId
+        if (!accountId) {
+          console.warn('[Notification] WeChat accountId not configured, skipping')
+          continue
+        }
+        const users = [
+          ...(config.wechat?.pairedUsers ?? []),
+          ...(config.wechat?.allowedUsers ?? []).map((id) => ({ userId: id })),
+        ]
+        for (const user of users) {
+          await sendWechat(accountId, String(user.userId), markdown)
         }
       }
     } catch (err) {

@@ -162,12 +162,17 @@ export function ModelSelector({
 
   const isControlled = value !== undefined
   const isRuntimeScoped = !isControlled && runtimeKey !== undefined
+  // Controlled mode also needs the full provider list so the dropdown can
+  // expose every configured provider's models, not just the currently active
+  // one. Without this, callers like NewTaskModal see only `availableModels`
+  // (active provider) and can't switch models across providers.
+  const needsProviderTree = isRuntimeScoped || isControlled
 
   useEffect(() => {
-    if (!isRuntimeScoped || providersLoading || requestedProvidersRef.current) return
+    if (!needsProviderTree || providersLoading || requestedProvidersRef.current) return
     requestedProvidersRef.current = true
     void fetchProviders()
-  }, [fetchProviders, isRuntimeScoped, providersLoading])
+  }, [fetchProviders, needsProviderTree, providersLoading])
 
   useEffect(() => {
     if (!open) return
@@ -207,8 +212,16 @@ export function ModelSelector({
   )
 
   const selectedModel = isControlled
-    ? availableModels.find((model) => model.id === value) || null
+    // Search across every provider's models so a value picked from a
+    // non-active provider still shows its label/description in the button.
+    ? providerChoices.flatMap((c) => c.models).find((model) => model.id === value)
+        ?? availableModels.find((model) => model.id === value)
+        ?? null
     : storeModel
+
+  const selectedControlledChoice = isControlled
+    ? providerChoices.find((choice) => choice.models.some((m) => m.id === value)) ?? null
+    : null
 
   const activeRuntimeSelection = isRuntimeScoped
     ? runtimeSelection ?? resolveDefaultRuntimeSelection(
@@ -238,7 +251,9 @@ export function ModelSelector({
     : selectedModel?.name ?? t('model.selectModel')
   const buttonProviderLabel = isRuntimeScoped
     ? selectedProviderChoice?.providerName ?? activeProviderName ?? t('settings.providers.officialName')
-    : null
+    : isControlled
+      ? selectedControlledChoice?.providerName ?? null
+      : null
 
   const handleRuntimeSelect = (selection: RuntimeSelection) => {
     if (!runtimeKey) return
@@ -335,6 +350,70 @@ export function ModelSelector({
                   </div>
                 ))}
               </div>
+            ) : isControlled ? (
+              // Controlled mode renders the same provider tree as runtime
+              // mode so callers like NewTaskModal can choose any model from
+              // any configured provider. We still emit a plain modelId via
+              // onChange — providerId routing is handled at execution time.
+              <div className="space-y-3">
+                {providerChoices.map((choice) => (
+                  <div key={choice.providerId ?? 'official'} className="space-y-1.5">
+                    <div className="flex items-center justify-between px-2 pt-1">
+                      <span className="truncate text-[11px] font-semibold tracking-[0.01em] text-[var(--color-text-secondary)]">
+                        {choice.providerName}
+                      </span>
+                      {choice.isDefault && (
+                        <span className="flex-shrink-0 text-[10px] font-medium text-[var(--color-text-tertiary)]">
+                          {t('settings.providers.default')}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      {choice.models.map((model) => {
+                        const isSelected = model.id === value
+                        return (
+                          <button
+                            key={`${choice.providerId ?? 'official'}:${model.id}`}
+                            onClick={() => {
+                              onChange?.(model.id)
+                              setOpen(false)
+                            }}
+                            className={`
+                              w-full rounded-lg border px-3 py-2.5 text-left transition-colors
+                              ${isSelected
+                                ? 'border-[var(--color-brand)]/20 bg-[var(--color-primary-fixed)]'
+                                : 'border-transparent hover:bg-[var(--color-surface-hover)]'
+                              }
+                            `}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                                isSelected ? 'border-[var(--color-brand)]' : 'border-[var(--color-outline)]'
+                              }`}>
+                                {isSelected && (
+                                  <div className="h-2 w-2 rounded-full bg-[var(--color-brand)]" />
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                                  {model.name}
+                                </div>
+                                {model.description && (
+                                  <div className="mt-0.5 truncate pr-[6px] text-[10px] text-[var(--color-text-tertiary)]">
+                                    {model.description}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="space-y-1">
                 {availableModels.map((model) => {
@@ -343,11 +422,7 @@ export function ModelSelector({
                     <button
                       key={model.id}
                       onClick={() => {
-                        if (isControlled) {
-                          onChange?.(model.id)
-                        } else {
-                          void setModel(model.id)
-                        }
+                        void setModel(model.id)
                         setOpen(false)
                       }}
                       className={`
