@@ -209,8 +209,15 @@ export class ProviderService {
 
     if (provider.presetId === 'official') {
       await this.clearProviderFromSettings()
+      await this.resetCurrentModel(undefined)
     } else {
       await this.syncToSettings(provider)
+      // Reset settings.model to the new provider's main model. Without this a
+      // model id from a previously-active provider (e.g. mimo from xiaomi)
+      // would persist in settings.json and route into the new provider's
+      // endpoint, causing "no such model" 503s in IM adapters that don't go
+      // through the frontend's defensive setModel() hook.
+      await this.resetCurrentModel(provider.models.main)
     }
   }
 
@@ -219,6 +226,20 @@ export class ProviderService {
     index.activeId = null
     await this.writeIndex(index)
     await this.clearProviderFromSettings()
+    await this.resetCurrentModel(undefined)
+  }
+
+  /** Clear or replace `settings.model` / `settings.modelContext` so a stale
+   *  model id from a prior provider doesn't bleed into the new active one. */
+  private async resetCurrentModel(nextModel: string | undefined): Promise<void> {
+    const settings = await this.readSettings()
+    if (nextModel) {
+      settings.model = nextModel
+    } else {
+      delete settings.model
+    }
+    delete settings.modelContext
+    await this.writeSettings(settings)
   }
 
   // --- Settings sync ---

@@ -1094,7 +1094,8 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
   }
 
   // Check if a custom provider is active
-  const { activeId } = await providerService.listProviders()
+  const { providers, activeId } = await providerService.listProviders()
+  const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
   const userSettings = await settingsService.getUserSettings()
   const providerSettings = activeId
     ? await providerService.getManagedSettings()
@@ -1110,13 +1111,35 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
       : undefined
 
   let model: string | undefined
-  if (activeId) {
+  if (activeId && activeProvider) {
     // Provider is active — only consult provider-managed cc-haha settings.
     // Global ~/.claude/settings.json model values must not bleed into provider mode.
-    const baseModel =
+    let baseModel =
       typeof modelSettings.model === 'string' && modelSettings.model.trim()
         ? modelSettings.model
         : ''
+    // Self-heal: if the persisted model belongs to a different provider (left
+    // over from a prior activation), discard it and fall back to the active
+    // provider's main model. Otherwise IM adapters would forward an unknown
+    // model id into the active provider's endpoint and trigger 503s.
+    if (baseModel) {
+      const providerModelIds = new Set(
+        [
+          activeProvider.models.main,
+          activeProvider.models.haiku,
+          activeProvider.models.sonnet,
+          activeProvider.models.opus,
+        ]
+          .map((m) => (typeof m === 'string' ? m.trim() : ''))
+          .filter((m) => m.length > 0),
+      )
+      if (!providerModelIds.has(baseModel)) {
+        baseModel = activeProvider.models.main
+        await providerService
+          .updateManagedSettings({ model: baseModel, modelContext: undefined })
+          .catch(() => {})
+      }
+    }
     if (baseModel) {
       model = baseModel
       if (modelContext) model += `:${modelContext}`

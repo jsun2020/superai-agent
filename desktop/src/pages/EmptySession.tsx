@@ -221,11 +221,35 @@ export function EmptySession() {
           ? providerState.providers.find((provider) => provider.name === settings.activeProviderName)?.id ?? null
           : null
       )
+      // Validate the (provider, model) pair: if the persisted/current model id
+      // doesn't belong to the chosen provider — possible after activating a
+      // new provider while settings.model still points at an old one — fall
+      // back to the provider's main model. Without this, the chat session
+      // would post model=X to provider=Y and the upstream API rejects it.
+      const inferredProvider = inferredProviderId
+        ? providerState.providers.find((p) => p.id === inferredProviderId) ?? null
+        : null
+      let inferredModelId = settings.currentModel?.id ?? OFFICIAL_DEFAULT_MODEL_ID
+      if (inferredProvider) {
+        const providerModelIds = new Set(
+          [
+            inferredProvider.models.main,
+            inferredProvider.models.haiku,
+            inferredProvider.models.sonnet,
+            inferredProvider.models.opus,
+          ]
+            .map((m) => (typeof m === 'string' ? m.trim() : ''))
+            .filter((m) => m.length > 0),
+        )
+        if (!providerModelIds.has(inferredModelId)) {
+          inferredModelId = inferredProvider.models.main || inferredModelId
+        }
+      }
       const draftSelection =
         useSessionRuntimeStore.getState().selections[DRAFT_RUNTIME_SELECTION_KEY]
         ?? {
           providerId: inferredProviderId,
-          modelId: settings.currentModel?.id ?? OFFICIAL_DEFAULT_MODEL_ID,
+          modelId: inferredModelId,
         }
       const sessionId = await createSession(workDir || undefined)
       setActiveView('code')

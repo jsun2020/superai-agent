@@ -350,6 +350,44 @@ describe('ProviderService', () => {
       }
     })
 
+    test('should reset settings.model to new provider main on activation', async () => {
+      // Simulate the bug scenario: a stale model id from a previously-active
+      // provider lingers in settings.json. Activating a new provider must
+      // overwrite settings.model so the IM/CLI path doesn't forward an
+      // unknown model into the new provider's endpoint.
+      const svc = new ProviderService()
+      const xiaomi = await svc.addProvider(sampleInput({
+        name: 'xiaomi',
+        models: { main: 'mimo-v2.5-pro', haiku: 'mimo-v2.5-pro', sonnet: 'mimo-v2.5-pro', opus: 'mimo-v2.5-pro' },
+      }))
+      const yunwu = await svc.addProvider(sampleInput({
+        name: 'yunwu',
+        models: { main: 'claude-sonnet-4-6', haiku: 'claude-haiku-4-5', sonnet: 'claude-sonnet-4-6', opus: 'claude-opus-4-7' },
+      }))
+
+      await svc.activateProvider(xiaomi.id)
+      // Pretend the user picked mimo at some point — settings.model was written.
+      await svc.updateManagedSettings({ model: 'mimo-v2.5-pro', modelContext: '1m' })
+
+      // Now switch to Yunwu — settings.model must be overwritten, not preserved.
+      await svc.activateProvider(yunwu.id)
+      const settings = await readSettings()
+      expect(settings.model).toBe('claude-sonnet-4-6')
+      expect(settings.modelContext).toBeUndefined()
+    })
+
+    test('activateOfficial should clear stale settings.model', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+      await svc.updateManagedSettings({ model: 'leftover-model', modelContext: '200k' })
+
+      await svc.activateOfficial()
+      const settings = await readSettings()
+      expect(settings.model).toBeUndefined()
+      expect(settings.modelContext).toBeUndefined()
+    })
+
     test('activeId should be persisted in providers.json', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput())

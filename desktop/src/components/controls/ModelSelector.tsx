@@ -94,9 +94,34 @@ function resolveDefaultRuntimeSelection(
       : null
   )
 
+  // Validate that currentModelId actually belongs to the chosen provider.
+  // settings.model can drift across provider activations (e.g. mimo from
+  // xiaomi lingering after Yunwu becomes active), so blindly pairing
+  // {activeProvider, currentModel} can produce a "modelX providerY" mismatch
+  // that mislabels the UI and routes broken requests.
+  const provider = inferredProviderId
+    ? providers.find((p) => p.id === inferredProviderId) ?? null
+    : null
+  let modelId = currentModelId ?? OFFICIAL_DEFAULT_MODEL_ID
+  if (provider) {
+    const providerModelIds = new Set(
+      [
+        provider.models.main,
+        provider.models.haiku,
+        provider.models.sonnet,
+        provider.models.opus,
+      ]
+        .map((m) => (typeof m === 'string' ? m.trim() : ''))
+        .filter((m) => m.length > 0),
+    )
+    if (!providerModelIds.has(modelId)) {
+      modelId = provider.models.main || modelId
+    }
+  }
+
   return {
     providerId: inferredProviderId,
-    modelId: currentModelId ?? OFFICIAL_DEFAULT_MODEL_ID,
+    modelId,
   }
 }
 

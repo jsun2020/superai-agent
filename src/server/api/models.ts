@@ -118,11 +118,34 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       // This avoids leaking global ~/.claude/settings.json model choices into
       // the active provider flow.
       const providerEnvModel = env.ANTHROPIC_MODEL
-      if (providerEnvModel && !explicitModel) {
+      const providerModelIds = new Set(
+        [
+          activeProvider.models.main,
+          activeProvider.models.haiku,
+          activeProvider.models.sonnet,
+          activeProvider.models.opus,
+        ]
+          .map((m) => (typeof m === 'string' ? m.trim() : ''))
+          .filter((m) => m.length > 0),
+      )
+      // Self-heal: if the persisted explicitModel doesn't belong to the
+      // currently-active provider (left over from a prior provider), drop it
+      // and fall back to the provider's main model. This prevents the frontend
+      // and IM adapters from sending model=X to a provider that doesn't carry X.
+      const explicitMatchesProvider =
+        !!explicitModel && providerModelIds.has(explicitModel)
+      if (explicitModel && !explicitMatchesProvider) {
+        await providerService.updateManagedSettings({
+          model: activeProvider.models.main,
+          modelContext: undefined,
+        })
+      }
+      const usableExplicitModel = explicitMatchesProvider ? explicitModel : ''
+      if (providerEnvModel && !usableExplicitModel) {
         currentModelId = providerEnvModel
         currentModelName = providerEnvModel
       } else {
-        currentModelId = explicitModel || providerEnvModel || activeProvider.models.main
+        currentModelId = usableExplicitModel || providerEnvModel || activeProvider.models.main
         currentModelName = currentModelId
       }
     } else {
