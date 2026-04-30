@@ -100,6 +100,10 @@ async function handleModelsList(): Promise<Response> {
 
 async function handleCurrentModel(req: Request): Promise<Response> {
   if (req.method === 'GET') {
+    // Self-heal env/model drift between providers.json and settings.json before
+    // reading. Without this, the desktop UI would echo back a model id from a
+    // prior provider and trigger downstream 503s.
+    await providerService.revalidateActiveSettings().catch(() => {})
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null

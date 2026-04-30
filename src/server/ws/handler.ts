@@ -1093,6 +1093,15 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
     }
   }
 
+  // Self-heal any drift between providers.json (active provider) and
+  // settings.json (env block + persisted model). This catches the case where
+  // settings.json carries leftover env vars or a model id from a previously
+  // active provider — the IM adapter would otherwise inject those stale env
+  // vars into the CLI subprocess and route requests to the wrong endpoint.
+  await providerService.revalidateActiveSettings().catch((err) => {
+    console.warn('[WS] revalidateActiveSettings failed:', err instanceof Error ? err.message : err)
+  })
+
   // Check if a custom provider is active
   const { providers, activeId } = await providerService.listProviders()
   const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null

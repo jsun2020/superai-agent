@@ -387,7 +387,90 @@ describe('ProviderService', () => {
       expect(settings.model).toBeUndefined()
       expect(settings.modelContext).toBeUndefined()
     })
+  })
 
+  // ─── revalidateActiveSettings ────────────────────────────────────────────
+
+  describe('revalidateActiveSettings', () => {
+    test('should re-sync env block when settings.json points at a deleted provider', async () => {
+      // Reproduce the user-reported drift: active provider in providers.json
+      // is Yunwu, but settings.json env still has xiaomi's URL/key/model from
+      // a prior activation that was never re-synced.
+      const svc = new ProviderService()
+      const yunwu = await svc.addProvider(sampleInput({
+        name: 'Yunwu',
+        baseUrl: 'https://yunwu.ai',
+        apiKey: 'sk-yunwu',
+        models: { main: 'claude-sonnet-4-6', haiku: 'claude-sonnet-4-6', sonnet: 'claude-sonnet-4-6', opus: 'claude-sonnet-4-6' },
+      }))
+      await svc.activateProvider(yunwu.id)
+      // Simulate stale env + model from a previously-active xiaomi provider.
+      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.writeFile(
+        path.join(tmpDir, 'cc-haha', 'settings.json'),
+        JSON.stringify({
+          model: 'mimo-v2.5-pro',
+          env: {
+            ANTHROPIC_BASE_URL: 'https://token-plan-sgp.xiaomimimo.com/anthropic',
+            ANTHROPIC_API_KEY: 'sk-xiaomi-stale',
+            ANTHROPIC_MODEL: 'mimo-v2.5-pro',
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: 'mimo-v2.5-pro',
+            ANTHROPIC_DEFAULT_SONNET_MODEL: 'mimo-v2.5-pro',
+            ANTHROPIC_DEFAULT_OPUS_MODEL: 'mimo-v2.5-pro',
+            CUSTOM_USER_VAR: 'preserve-me',
+          },
+          skipWebFetchPreflight: true,
+        }),
+      )
+
+      const repaired = await svc.revalidateActiveSettings()
+      expect(repaired).toBe(true)
+
+      const settings = await readSettings()
+      expect(settings.model).toBe('claude-sonnet-4-6')
+      const env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://yunwu.ai')
+      expect(env.ANTHROPIC_API_KEY).toBe('sk-yunwu')
+      expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+      // Non-managed env keys must be preserved across re-sync.
+      expect(env.CUSTOM_USER_VAR).toBe('preserve-me')
+      expect(settings.skipWebFetchPreflight).toBe(true)
+    })
+
+    test('should be idempotent when settings.json already matches active provider', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+
+      const repaired = await svc.revalidateActiveSettings()
+      expect(repaired).toBe(false)
+    })
+
+    test('should clear activeId pointing at a deleted provider', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+      // Simulate corruption: providers.json still references an id that's no
+      // longer in the providers list.
+      const idxPath = path.join(tmpDir, 'cc-haha', 'providers.json')
+      const idx = JSON.parse(await fs.readFile(idxPath, 'utf-8'))
+      idx.providers = []
+      await fs.writeFile(idxPath, JSON.stringify(idx))
+
+      const repaired = await svc.revalidateActiveSettings()
+      expect(repaired).toBe(true)
+
+      const cleaned = JSON.parse(await fs.readFile(idxPath, 'utf-8'))
+      expect(cleaned.activeId).toBeNull()
+      const settings = await readSettings()
+      expect(settings.model).toBeUndefined()
+      expect(settings.env).toBeUndefined()
+    })
+  })
+
+  // ─── activateProvider (continued) ────────────────────────────────────────
+
+  describe('activateProvider (persistence)', () => {
     test('activeId should be persisted in providers.json', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput())

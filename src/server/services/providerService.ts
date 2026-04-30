@@ -195,6 +195,11 @@ export class ProviderService {
 
     index.providers.splice(idx, 1)
     await this.writeIndex(index)
+    // After deletion, settings.json's env block can still hold managed keys
+    // from the deleted provider if a previous activation never re-synced (e.g.
+    // user activated provider A, edited B's settings out-of-band, deleted A).
+    // Re-validate so the env always matches whichever provider is active now.
+    await this.revalidateActiveSettings()
   }
 
   // --- Activation ---
@@ -240,6 +245,67 @@ export class ProviderService {
     }
     delete settings.modelContext
     await this.writeSettings(settings)
+  }
+
+  /** Self-heal: if settings.json's env block or top-level model still points at
+   *  a previously-active provider (after a delete or out-of-band edit), re-run
+   *  syncToSettings + resetCurrentModel for the current activeId. Returns
+   *  true if a repair was applied. Safe to call repeatedly (idempotent on
+   *  already-correct state). */
+  async revalidateActiveSettings(): Promise<boolean> {
+    const index = await this.readIndex()
+    const settings = await this.readSettings()
+    const env = (settings.env as Record<string, string>) || {}
+
+    if (!index.activeId) {
+      // No active provider: env should not contain managed keys, model should
+      // be empty. If anything lingers, clear it.
+      const hasManagedEnv = MANAGED_ENV_KEYS.some((k) => k in env)
+      const hasManagedModel = typeof settings.model === 'string' && settings.model.length > 0
+      if (!hasManagedEnv && !hasManagedModel) return false
+      await this.clearProviderFromSettings()
+      await this.resetCurrentModel(undefined)
+      return true
+    }
+
+    const provider = index.providers.find((p) => p.id === index.activeId)
+    if (!provider) {
+      // activeId points at a deleted provider — drop activation.
+      index.activeId = null
+      await this.writeIndex(index)
+      await this.clearProviderFromSettings()
+      await this.resetCurrentModel(undefined)
+      return true
+    }
+
+    if (provider.presetId === 'official') {
+      const hasManagedEnv = MANAGED_ENV_KEYS.some((k) => k in env)
+      const explicitModel = typeof settings.model === 'string' ? settings.model : ''
+      if (!hasManagedEnv && !explicitModel) return false
+      await this.clearProviderFromSettings()
+      await this.resetCurrentModel(undefined)
+      return true
+    }
+
+    const expected = this.buildManagedEnv(provider)
+    const envMatches = MANAGED_ENV_KEYS.every((k) => env[k] === expected[k])
+    const explicitModel = typeof settings.model === 'string' ? settings.model : ''
+    const providerModelIds = new Set(
+      [
+        provider.models.main,
+        provider.models.haiku,
+        provider.models.sonnet,
+        provider.models.opus,
+      ]
+        .map((m) => (typeof m === 'string' ? m.trim() : ''))
+        .filter((m) => m.length > 0),
+    )
+    const modelMatches = !explicitModel || providerModelIds.has(explicitModel)
+
+    if (envMatches && modelMatches) return false
+    if (!envMatches) await this.syncToSettings(provider)
+    if (!modelMatches) await this.resetCurrentModel(provider.models.main)
+    return true
   }
 
   // --- Settings sync ---
