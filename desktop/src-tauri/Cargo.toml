@@ -1,10 +1,10 @@
 [package]
-name = "claude-code-desktop"
-version = "0.1.7"
+name = "superai-agent-desktop"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
-name = "claude_code_desktop_lib"
+name = "superai_agent_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

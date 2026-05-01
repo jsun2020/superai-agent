@@ -1,24 +1,50 @@
 import { create } from 'zustand'
-import type { ThemeMode } from '../types/settings'
+import type { ThemeMode, ResolvedTheme } from '../types/settings'
 
-const THEME_STORAGE_KEY = 'cc-haha-theme'
+const THEME_STORAGE_KEY = 'superai-agent-theme'
 
 function getStoredTheme(): ThemeMode {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark') return stored
+    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
   } catch { /* localStorage unavailable */ }
-  return 'light'
+  return 'system'
+}
+
+function getSystemTheme(): ResolvedTheme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+export function resolveTheme(theme: ThemeMode): ResolvedTheme {
+  return theme === 'system' ? getSystemTheme() : theme
 }
 
 export function applyTheme(theme: ThemeMode) {
   if (typeof document === 'undefined') return
-  document.documentElement.setAttribute('data-theme', theme)
-  document.documentElement.style.colorScheme = theme
+  const resolved = resolveTheme(theme)
+  document.documentElement.setAttribute('data-theme', resolved)
+  document.documentElement.style.colorScheme = resolved
 }
+
+let mediaListenerInstalled = false
 
 export function initializeTheme() {
   applyTheme(getStoredTheme())
+  if (mediaListenerInstalled) return
+  if (typeof window === 'undefined' || !window.matchMedia) return
+  const mql = window.matchMedia('(prefers-color-scheme: dark)')
+  const onChange = () => {
+    if (useUIStore.getState().theme === 'system') {
+      applyTheme('system')
+    }
+  }
+  if (typeof mql.addEventListener === 'function') {
+    mql.addEventListener('change', onChange)
+  } else if (typeof mql.addListener === 'function') {
+    mql.addListener(onChange)
+  }
+  mediaListenerInstalled = true
 }
 
 export type Toast = {
@@ -81,7 +107,8 @@ export const useUIStore = create<UIStore>((set) => ({
 
   toggleTheme: () => {
     set((state) => {
-      const next = state.theme === 'light' ? 'dark' : 'light'
+      const current = resolveTheme(state.theme)
+      const next: ThemeMode = current === 'light' ? 'dark' : 'light'
       applyTheme(next)
       try { localStorage.setItem(THEME_STORAGE_KEY, next) } catch { /* noop */ }
       return { theme: next }

@@ -1,12 +1,12 @@
 /**
  * Standalone TUI entrypoint for the portable build.
  *
- * Compiled by build-sidecars.ts into `claude-haha-tui-<triple>.exe`. Unlike
- * `claude-sidecar.ts` this binary has no mode argument — running it directly
+ * Compiled by build-sidecars.ts into `superai-agent-tui-<triple>.exe`. Unlike
+ * `superai-agent-sidecar.ts` this binary has no mode argument — running it directly
  * (or double-clicking from a console) drops the user straight into the Ink
- * TUI, exactly like `bin/claude-haha` does in source form.
+ * TUI, exactly like `bin/superai-agent` does in source form.
  *
- * The portable build script ships this binary as `claude-haha-tui.exe`
+ * The portable build script ships this binary as `superai-agent-tui.exe`
  * alongside the Tauri Desktop window, so a user who prefers the terminal
  * experience never has to install Bun.
  */

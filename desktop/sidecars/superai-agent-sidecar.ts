@@ -1,15 +1,15 @@
 /**
- * Claude Code 桌面端合并 sidecar 入口。
+ * SuperAI Agent 桌面端合并 sidecar 入口。
  *
  * 历史上 server / cli / IM adapters 是各自独立的进程。每个 bun-compile
  * 二进制都要带一份 ~55MB 的 bun runtime，光这一项就重复占了 100MB+。
  * 把所有运行模式合并到同一个二进制里，runtime 只保留一份；调用方通过
  * 第一个 positional 参数选择模式：
  *
- *   claude-sidecar server       --app-root <path> --host 127.0.0.1 --port 12345
- *   claude-sidecar cli          --app-root <path> [其它 CLI 参数...]
- *   claude-sidecar adapters     --app-root <path> [--feishu] [--telegram] [--wechat]
- *   claude-sidecar wechat-login                  # 一次性扫码登录
+ *   superai-agent-sidecar server       --app-root <path> --host 127.0.0.1 --port 12345
+ *   superai-agent-sidecar cli          --app-root <path> [其它 CLI 参数...]
+ *   superai-agent-sidecar adapters     --app-root <path> [--feishu] [--telegram] [--wechat]
+ *   superai-agent-sidecar wechat-login                  # 一次性扫码登录
  *
  * 任何模式都必须先做 process.env / process.argv 设置，再 await 进入相应的
  * 子模块树。原因：src/server/index.ts、src/entrypoints/cli.tsx、以及
@@ -24,7 +24,7 @@ const rawArgs = process.argv.slice(2)
 const invocation = resolveSidecarInvocation(rawArgs)
 if (!invocation.mode) {
   // Friendly help text for users who double-click this binary directly.
-  // claude-sidecar.exe is an internal helper that ClaudeHaha.exe spawns as
+  // superai-agent-sidecar.exe is an internal helper that SuperAIAgent.exe spawns as
   // a child process with a mode argument. Without that arg it has no work
   // to do — but a raw "missing mode" error makes it look like a crash.
   //
@@ -32,14 +32,14 @@ if (!invocation.mode) {
   // text in red, which makes the friendly message look like a fatal error
   // even though it isn't.
   console.log('')
-  console.log('claude-sidecar.exe is an internal helper, not meant to run directly.')
+  console.log('superai-agent-sidecar.exe is an internal helper, not meant to run directly.')
   console.log('')
-  console.log('  - Double-click ClaudeHaha.exe          : desktop window (recommended)')
-  console.log('  - Run claude-haha-tui.exe              : terminal UI version')
-  console.log('  - Run claude-sidecar.exe wechat-login  : only direct use - scan WeChat QR')
+  console.log('  - Double-click SuperAIAgent.exe                : desktop window (recommended)')
+  console.log('  - Run superai-agent-tui.exe                    : terminal UI version')
+  console.log('  - Run superai-agent-sidecar.exe wechat-login   : only direct use - scan WeChat QR')
   console.log('')
   console.log(
-    'Internal modes (used by ClaudeHaha.exe): server, cli, adapters, wechat-login.',
+    'Internal modes (used by SuperAIAgent.exe): server, cli, adapters, wechat-login.',
   )
   console.log('')
   // 5-second pause so a user who double-clicked can read the message before
@@ -74,7 +74,7 @@ if (mode === 'adapters') {
     await import('../../src/entrypoints/cli.tsx')
   } else {
     console.error(
-      `claude-sidecar: unknown mode "${mode}" (expected "server", "cli", "adapters", or "wechat-login")`,
+      `superai-agent-sidecar: unknown mode "${mode}" (expected "server", "cli", "adapters", or "wechat-login")`,
     )
     process.exit(2)
   }
@@ -108,12 +108,12 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
       enableWechat = true
       continue
     }
-    console.warn(`claude-sidecar adapters: ignoring unknown arg "${arg}"`)
+    console.warn(`superai-agent-sidecar adapters: ignoring unknown arg "${arg}"`)
   }
 
   if (!enableFeishu && !enableTelegram && !enableWechat) {
     console.error(
-      'claude-sidecar adapters: must enable at least one of --feishu / --telegram / --wechat',
+      'superai-agent-sidecar adapters: must enable at least one of --feishu / --telegram / --wechat',
     )
     process.exit(2)
   }
@@ -137,10 +137,10 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   if (enableFeishu) {
     if (!config.feishu.appId || !config.feishu.appSecret) {
       console.warn(
-        '[claude-sidecar] --feishu requested but FEISHU_APP_ID / FEISHU_APP_SECRET missing in env or ~/.claude/adapters.json — skipping',
+        '[superai-agent-sidecar] --feishu requested but FEISHU_APP_ID / FEISHU_APP_SECRET missing in env or ~/.claude/adapters.json — skipping',
       )
     } else {
-      console.log('[claude-sidecar] starting Feishu adapter')
+      console.log('[superai-agent-sidecar] starting Feishu adapter')
       // 副作用 import：feishu/index.ts 顶层会自动 new WSClient + start()
       await import('../../adapters/feishu/index.ts')
       started += 1
@@ -150,10 +150,10 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   if (enableTelegram) {
     if (!config.telegram.botToken) {
       console.warn(
-        '[claude-sidecar] --telegram requested but TELEGRAM_BOT_TOKEN missing in env or ~/.claude/adapters.json — skipping',
+        '[superai-agent-sidecar] --telegram requested but TELEGRAM_BOT_TOKEN missing in env or ~/.claude/adapters.json — skipping',
       )
     } else {
-      console.log('[claude-sidecar] starting Telegram adapter')
+      console.log('[superai-agent-sidecar] starting Telegram adapter')
       // 副作用 import：telegram/index.ts 顶层会自动 bot.start()
       await import('../../adapters/telegram/index.ts')
       started += 1
@@ -162,16 +162,16 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
 
   if (enableWechat) {
     // wechat 没有 env-only 凭据 —— 凭据是 ~/.claude/wechat-accounts/<id>.json，
-    // 由 `claude-sidecar wechat-login` 一次性扫码生成。这里只检查是否存在
+    // 由 `superai-agent-sidecar wechat-login` 一次性扫码生成。这里只检查是否存在
     // 任意账号；缺账号就 warn + skip，跟 feishu / telegram 缺凭据时同等处理。
     const { listAccounts } = await import('../../adapters/wechat/account-store.ts')
     const accounts = listAccounts()
     if (accounts.length === 0) {
       console.warn(
-        '[claude-sidecar] --wechat requested but no account found under ~/.claude/wechat-accounts/. Run `claude-sidecar wechat-login` first — skipping',
+        '[superai-agent-sidecar] --wechat requested but no account found under ~/.claude/wechat-accounts/. Run `superai-agent-sidecar wechat-login` first — skipping',
       )
     } else {
-      console.log('[claude-sidecar] starting Wechat adapter')
+      console.log('[superai-agent-sidecar] starting Wechat adapter')
       await import('../../adapters/wechat/index.ts')
       started += 1
     }
@@ -179,7 +179,7 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
 
   if (started === 0) {
     console.error(
-      '[claude-sidecar] no adapter could be started — check credentials in env or ~/.claude/adapters.json',
+      '[superai-agent-sidecar] no adapter could be started — check credentials in env or ~/.claude/adapters.json',
     )
     process.exit(1)
   }

@@ -749,6 +749,7 @@ function GeneralSettings() {
   const THEMES: Array<{ value: ThemeMode; label: string }> = [
     { value: 'light', label: t('settings.general.appearance.light') },
     { value: 'dark', label: t('settings.general.appearance.dark') },
+    { value: 'system', label: t('settings.general.appearance.system') },
   ]
 
   return (
@@ -1453,8 +1454,8 @@ function AboutSettings() {
   return (
     <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
-      <img src="/app-icon.png" alt="Claude Code Haha" className="w-20 h-20 mb-4" />
-      <h1 className="text-xl font-bold text-[var(--color-text-primary)]">Claude Code Haha</h1>
+      <img src="/app-icon.png" alt="SuperAI Agent" className="w-20 h-20 mb-4" />
+      <h1 className="text-xl font-bold text-[var(--color-text-primary)]">SuperAI Agent</h1>
       {version && (
         <span className="text-xs text-[var(--color-text-tertiary)] mt-1">{t('settings.about.version')} {version}</span>
       )}

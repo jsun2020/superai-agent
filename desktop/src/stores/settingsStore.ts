@@ -5,7 +5,7 @@ import type { PermissionMode, EffortLevel, ModelInfo, ThemeMode } from '../types
 import type { Locale } from '../i18n'
 import { useUIStore } from './uiStore'
 
-const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const LOCALE_STORAGE_KEY = 'superai-agent-locale'
 
 function getStoredLocale(): Locale {
   try {
@@ -58,7 +58,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         modelsApi.getEffort(),
         settingsApi.getUser(),
       ])
-      const theme = userSettings.theme === 'dark' ? 'dark' : 'light'
+      const rawTheme = userSettings.theme
+      const theme: typeof rawTheme = rawTheme === 'dark' || rawTheme === 'light' || rawTheme === 'system'
+        ? rawTheme
+        : useUIStore.getState().theme
       useUIStore.getState().setTheme(theme)
       set({
         permissionMode: mode,

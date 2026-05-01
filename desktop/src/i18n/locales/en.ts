@@ -187,7 +187,7 @@ export const en = {
   'settings.adapters.wechat': 'WeChat',
   'settings.adapters.wechatLoginTitle': 'WeChat login (QR scan)',
   'settings.adapters.wechatLoginHint':
-    'WeChat does not use API keys. Open a terminal in the install folder and run: claude-sidecar.exe wechat-login. Scan the QR with WeChat, confirm on your phone, then restart the app.',
+    'WeChat does not use API keys. Open a terminal in the install folder and run: superai-agent-sidecar.exe wechat-login. Scan the QR with WeChat, confirm on your phone, then restart the app.',
   'settings.adapters.wechatNoAccount': 'No WeChat account configured yet.',
   'settings.adapters.wechatAccountId': 'Active account ID',
   'settings.adapters.wechatAccountIdPlaceholder': 'Leave empty to use the first account found',
@@ -474,9 +474,10 @@ export const en = {
 
   // Settings > General
   'settings.general.appearanceTitle': 'Appearance',
-  'settings.general.appearanceDescription': 'Switch between the original light workspace and the new dark workspace.',
+  'settings.general.appearanceDescription': 'Choose Light, Dark, or follow your operating system theme.',
   'settings.general.appearance.light': 'Light',
   'settings.general.appearance.dark': 'Dark',
+  'settings.general.appearance.system': 'System',
   'settings.general.languageTitle': 'Language',
   'settings.general.languageDescription': 'Choose the display language for the application.',
   'settings.general.effortTitle': 'Effort Level',

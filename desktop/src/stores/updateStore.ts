@@ -15,7 +15,7 @@ type CheckOptions = {
   silent?: boolean
 }
 
-const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
+const DISMISSED_UPDATE_VERSION_KEY = 'superai-agent-dismissed-update-version'
 
 type UpdateStore = {
   status: UpdateStatus

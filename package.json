@@ -1,14 +1,14 @@
 {
-  "name": "claude-code-local",
+  "name": "superai-agent",
   "version": "999.0.0-local",
   "private": true,
   "type": "module",
   "bin": {
-    "claude-haha": "./bin/claude-haha"
+    "superai-agent": "./bin/superai-agent"
   },
   "scripts": {
-    "claude-haha": "bun run ./bin/claude-haha",
-    "start": "bun run ./bin/claude-haha",
+    "superai-agent": "bun run ./bin/superai-agent",
+    "start": "bun run ./bin/superai-agent",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",

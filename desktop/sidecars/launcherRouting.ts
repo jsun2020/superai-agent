@@ -8,7 +8,7 @@ const EXPLICIT_MODES = new Set<SidecarMode>([
   'adapters',
   'wechat-login',
 ])
-const DESKTOP_CLI_NAMES = new Set(['claude-haha', 'claude-haha.exe'])
+const DESKTOP_CLI_NAMES = new Set(['superai-agent', 'superai-agent.exe'])
 
 export function resolveSidecarInvocation(
   rawArgs: string[],
@@ -62,7 +62,7 @@ export function parseLauncherArgs(
   }
 
   if (!appRoot) {
-    throw new Error('Missing --app-root for claude-sidecar')
+    throw new Error('Missing --app-root for superai-agent-sidecar')
   }
 
   return { appRoot, args: nextArgs }

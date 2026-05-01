@@ -7,7 +7,7 @@ describe('resolveSidecarInvocation', () => {
     expect(
       resolveSidecarInvocation(
         ['server', '--host', '127.0.0.1'],
-        '/tmp/claude-sidecar',
+        '/tmp/superai-agent-sidecar',
       ),
     ).toEqual({
       mode: 'server',
@@ -16,11 +16,11 @@ describe('resolveSidecarInvocation', () => {
     })
   })
 
-  it('defaults claude-haha invocations to cli mode', () => {
+  it('defaults superai-agent invocations to cli mode', () => {
     expect(
       resolveSidecarInvocation(
         ['plugin', 'install', 'demo'],
-        '/Users/demo/.local/bin/claude-haha',
+        '/Users/demo/.local/bin/superai-agent',
       ),
     ).toEqual({
       mode: 'cli',

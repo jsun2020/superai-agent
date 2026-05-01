@@ -40,7 +40,7 @@ struct ServerStatus {
 
 /// 与 ServerState 平级的 adapter 子进程状态。
 ///
-/// adapter sidecar（claude-sidecar adapters --feishu --telegram）的生命周期
+/// adapter sidecar（superai-agent-sidecar adapters --feishu --telegram）的生命周期
 /// 跟 server 不同：它没有 HTTP 端口可探活，没配凭据时会自己干净退出，
 /// 而且需要支持运行时热重启 —— 用户在设置页保存飞书 / Telegram 凭据后，
 /// 前端会通过 invoke('restart_adapters_sidecar') 来重启它，让新凭据生效。
@@ -626,7 +626,7 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     // 单一合并 sidecar：第一个参数选 server / cli / adapters 模式。
     let sidecar = app
         .shell()
-        .sidecar("claude-sidecar")
+        .sidecar("superai-agent-sidecar")
         .map_err(|err| format!("resolve sidecar: {err}"))?
         .args([
             "server",
@@ -712,7 +712,7 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
 
     let sidecar = app
         .shell()
-        .sidecar("claude-sidecar")
+        .sidecar("superai-agent-sidecar")
         .map_err(|err| format!("resolve sidecar: {err}"))?
         .env("ADAPTER_SERVER_URL", &server_ws_url)
         .args([
@@ -790,11 +790,11 @@ fn stop_adapters_sidecar(app: &AppHandle) {
 #[cfg(target_os = "windows")]
 fn kill_windows_sidecars() {
     for image_name in [
-        "claude-sidecar-x86_64-pc-windows-msvc.exe",
-        "claude-sidecar-aarch64-pc-windows-msvc.exe",
-        "claude-sidecar.exe",
-        "claude-haha-tui-x86_64-pc-windows-msvc.exe",
-        "claude-haha-tui.exe",
+        "superai-agent-sidecar-x86_64-pc-windows-msvc.exe",
+        "superai-agent-sidecar-aarch64-pc-windows-msvc.exe",
+        "superai-agent-sidecar.exe",
+        "superai-agent-tui-x86_64-pc-windows-msvc.exe",
+        "superai-agent-tui.exe",
     ] {
         let _ = StdCommand::new("taskkill")
             .args(["/F", "/T", "/IM", image_name])
@@ -916,12 +916,12 @@ pub fn run() {
     let builder = builder
         .menu(|app| {
             let about_item =
-                MenuItemBuilder::with_id("nav_about", "关于 Claude Code Haha").build(app)?;
+                MenuItemBuilder::with_id("nav_about", "关于 SuperAI Agent").build(app)?;
             let settings_item = MenuItemBuilder::with_id("nav_settings", "设置...")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
 
-            let app_submenu = SubmenuBuilder::new(app, "Claude Code Haha")
+            let app_submenu = SubmenuBuilder::new(app, "SuperAI Agent")
                 .item(&about_item)
                 .separator()
                 .item(&settings_item)

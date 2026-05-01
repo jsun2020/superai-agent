@@ -189,7 +189,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.adapters.wechat': '微信 (WeChat)',
   'settings.adapters.wechatLoginTitle': '微信扫码登录',
   'settings.adapters.wechatLoginHint':
-    '微信不需要 API 密钥。在安装目录下打开终端，运行：claude-sidecar.exe wechat-login，使用微信扫码并在手机上确认，然后重启应用。',
+    '微信不需要 API 密钥。在安装目录下打开终端，运行：superai-agent-sidecar.exe wechat-login，使用微信扫码并在手机上确认，然后重启应用。',
   'settings.adapters.wechatNoAccount': '尚未配置微信账号。',
   'settings.adapters.wechatAccountId': '当前账号 ID',
   'settings.adapters.wechatAccountIdPlaceholder': '留空则使用找到的第一个账号',
@@ -476,9 +476,10 @@ export const zh: Record<TranslationKey, string> = {
 
   // Settings > General
   'settings.general.appearanceTitle': '配色主题',
-  'settings.general.appearanceDescription': '在亮色与暗色工作区之间切换，不影响原有亮色主题。',
+  'settings.general.appearanceDescription': '在亮色、暗色之间切换，或跟随系统主题。',
   'settings.general.appearance.light': '亮色',
   'settings.general.appearance.dark': '暗色',
+  'settings.general.appearance.system': '跟随系统',
   'settings.general.languageTitle': '语言',
   'settings.general.languageDescription': '选择应用程序的显示语言。',
   'settings.general.effortTitle': '推理强度',

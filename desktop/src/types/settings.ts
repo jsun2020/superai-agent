@@ -3,7 +3,8 @@
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk'
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max'
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'light' | 'dark' | 'system'
+export type ResolvedTheme = 'light' | 'dark'
 
 export type ModelInfo = {
   id: string

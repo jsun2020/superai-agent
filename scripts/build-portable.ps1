@@ -8,15 +8,15 @@ param(
 #  Portable Windows build orchestrator.
 #
 #  Produces a copy-and-run folder under  dist/portable/  containing:
-#    ClaudeHaha.exe                       — Tauri desktop window
-#    claude-sidecar.exe                   — bundled Bun runtime + server/adapters
-#    claude-haha-tui.exe                  — standalone terminal TUI
+#    SuperAIAgent.exe                     — Tauri desktop window
+#    superai-agent-sidecar.exe            — bundled Bun runtime + server/adapters
+#    superai-agent-tui.exe                — standalone terminal TUI
 #    .env.example                         — copy to .env and edit
 #    README-portable.txt                  — three-line usage note
 #
 #  Lifecycle:
-#    1. Double-click ClaudeHaha.exe → Tauri window opens
-#    2. Tauri loads .env from the folder, spawns claude-sidecar.exe children
+#    1. Double-click SuperAIAgent.exe → Tauri window opens
+#    2. Tauri loads .env from the folder, spawns superai-agent-sidecar.exe children
 #    3. Closing the window kills every child (lib.rs RunEvent::Exit handler
 #       + Windows taskkill fallback)
 #
@@ -31,7 +31,7 @@ $repoRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
 $desktopDir = Join-Path $repoRoot 'desktop'
 $targetTriple = 'x86_64-pc-windows-msvc'
 $portableDir = Join-Path $repoRoot 'dist\portable'
-$tauriTargetExe = Join-Path $desktopDir "src-tauri\target\$targetTriple\release\claude-code-desktop.exe"
+$tauriTargetExe = Join-Path $desktopDir "src-tauri\target\$targetTriple\release\superai-agent-desktop.exe"
 $binariesDir = Join-Path $desktopDir 'src-tauri\binaries'
 
 function Write-Step { param([string]$Message) Write-Host "[build-portable] $Message" }
@@ -106,7 +106,7 @@ if (-not $SkipInstall) {
 # The override config (disabling updater artifacts so we don't need a signing
 # key in this portable path) goes through a temp file because PowerShell's
 # native-command quoting eats inline JSON.
-$portableTauriCfg = Join-Path ([System.IO.Path]::GetTempPath()) 'cc-haha.tauri.portable.windows.json'
+$portableTauriCfg = Join-Path ([System.IO.Path]::GetTempPath()) 'superai-agent.tauri.portable.windows.json'
 @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Path $portableTauriCfg -Encoding UTF8
 
 Write-Step "Building Tauri Desktop (--no-bundle, no MSI/NSIS)"
@@ -129,58 +129,58 @@ Write-Step "Staging portable folder at $portableDir"
 if (Test-Path $portableDir) { Remove-Item -LiteralPath $portableDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
 
-Copy-Item -LiteralPath $tauriTargetExe -Destination (Join-Path $portableDir 'ClaudeHaha.exe')
+Copy-Item -LiteralPath $tauriTargetExe -Destination (Join-Path $portableDir 'SuperAIAgent.exe')
 
 # Sidecars produced by build-sidecars.ts (run as part of beforeBuildCommand).
-$sidecarSrc = Join-Path $binariesDir "claude-sidecar-$targetTriple.exe"
-$tuiSrc = Join-Path $binariesDir "claude-haha-tui-$targetTriple.exe"
-if (-not (Test-Path $sidecarSrc)) { throw "claude-sidecar binary missing: $sidecarSrc" }
-if (-not (Test-Path $tuiSrc)) { throw "claude-haha-tui binary missing: $tuiSrc" }
+$sidecarSrc = Join-Path $binariesDir "superai-agent-sidecar-$targetTriple.exe"
+$tuiSrc = Join-Path $binariesDir "superai-agent-tui-$targetTriple.exe"
+if (-not (Test-Path $sidecarSrc)) { throw "superai-agent-sidecar binary missing: $sidecarSrc" }
+if (-not (Test-Path $tuiSrc)) { throw "superai-agent-tui binary missing: $tuiSrc" }
 
 # Tauri requires the sidecar filename to match the target-triple form for the
 # externalBin lookup in lib.rs. We keep that name AND drop a friendlier alias
-# so users running from a console see `claude-sidecar.exe` / `claude-haha-tui.exe`.
-Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir "claude-sidecar-$targetTriple.exe")
-Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir 'claude-sidecar.exe')
-Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir "claude-haha-tui-$targetTriple.exe")
-Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'claude-haha-tui.exe')
+# so users running from a console see `superai-agent-sidecar.exe` / `superai-agent-tui.exe`.
+Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir "superai-agent-sidecar-$targetTriple.exe")
+Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir 'superai-agent-sidecar.exe')
+Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir "superai-agent-tui-$targetTriple.exe")
+Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'superai-agent-tui.exe')
 
 Copy-Item -LiteralPath (Join-Path $repoRoot '.env.example') -Destination (Join-Path $portableDir '.env.example')
 
 $readme = @'
-Claude Code Haha - Portable Windows Build
-=========================================
+SuperAI Agent - Portable Windows Build
+======================================
 
 Usage:
   1. Copy this entire folder anywhere you want.
   2. Open .env.example in Notepad, fill in your API keys / model,
      and Save As ".env" (no .txt suffix).
-  3. Double-click ClaudeHaha.exe to launch the desktop UI.
-     - Or run claude-haha-tui.exe from a terminal for the text UI.
+  3. Double-click SuperAIAgent.exe to launch the desktop UI.
+     - Or run superai-agent-tui.exe from a terminal for the text UI.
      - Closing the window kills every spawned child process automatically.
 
-DO NOT double-click claude-sidecar.exe - it is an internal helper that
-ClaudeHaha.exe spawns automatically. Running it directly will print a
+DO NOT double-click superai-agent-sidecar.exe - it is an internal helper that
+SuperAIAgent.exe spawns automatically. Running it directly will print a
 "missing mode argument" message and exit; that is by design.
 
 Optional WeChat IM setup:
-  This is the only situation where you run claude-sidecar.exe yourself.
+  This is the only situation where you run superai-agent-sidecar.exe yourself.
   Open a terminal in this folder and run:
-      claude-sidecar.exe wechat-login
+      superai-agent-sidecar.exe wechat-login
   Scan the QR code (saved to %USERPROFILE%\.claude\wechat-qr.png),
-  confirm in WeChat, then restart ClaudeHaha.exe - the WeChat adapter
+  confirm in WeChat, then restart SuperAIAgent.exe - the WeChat adapter
   will pick up the new account.
 
 Files:
-  ClaudeHaha.exe                Desktop window     (USER - double-click this)
-  claude-haha-tui.exe           Terminal UI        (USER - run from a terminal)
-  claude-sidecar.exe            Server + adapters  (INTERNAL - do not run)
-  claude-sidecar-x86_64-...exe  Target-triple alias Tauri''s externalBin needs
-  claude-haha-tui-x86_64-...exe Target-triple alias for the TUI
-  .env.example                  Template - copy to .env and edit
+  SuperAIAgent.exe                    Desktop window     (USER - double-click this)
+  superai-agent-tui.exe               Terminal UI        (USER - run from a terminal)
+  superai-agent-sidecar.exe           Server + adapters  (INTERNAL - do not run)
+  superai-agent-sidecar-x86_64-...exe Target-triple alias Tauri''s externalBin needs
+  superai-agent-tui-x86_64-...exe     Target-triple alias for the TUI
+  .env.example                        Template - copy to .env and edit
 
 WebView2:
-  ClaudeHaha.exe needs Microsoft Edge WebView2. Pre-installed on Windows 11
+  SuperAIAgent.exe needs Microsoft Edge WebView2. Pre-installed on Windows 11
   and most updated Windows 10 systems. If launching shows a "WebView2
   missing" dialog, install the Evergreen Bootstrapper from
       https://developer.microsoft.com/microsoft-edge/webview2/
@@ -190,7 +190,7 @@ Set-Content -LiteralPath (Join-Path $portableDir 'README-portable.txt') -Value $
 # 3) Optional zip.
 if (-not $SkipZip) {
   $version = (Get-Content -LiteralPath (Join-Path $desktopDir 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
-  $zipPath = Join-Path $repoRoot "dist\ClaudeHaha-Portable-v$version.zip"
+  $zipPath = Join-Path $repoRoot "dist\SuperAIAgent-Portable-v$version.zip"
   if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
   Write-Step "Zipping to $zipPath"
   Compress-Archive -Path (Join-Path $portableDir '*') -DestinationPath $zipPath -CompressionLevel Optimal

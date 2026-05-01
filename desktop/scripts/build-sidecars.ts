@@ -28,11 +28,11 @@ await mkdir(binariesDir, { recursive: true })
 
 // 单一合并 sidecar：server / cli 共享一份 bun runtime + 共享依赖代码。
 // 调用方（Tauri lib.rs / conversationService）通过第一个 positional 参数
-// 选择 'server' 或 'cli' 模式，详见 desktop/sidecars/claude-sidecar.ts。
+// 选择 'server' 或 'cli' 模式，详见 desktop/sidecars/superai-agent-sidecar.ts。
 await compileExecutable({
-  entrypoint: path.join(desktopRoot, 'sidecars/claude-sidecar.ts'),
-  outfileBase: path.join(binariesDir, `claude-sidecar-${targetTriple}`),
-  productName: 'Claude Code Sidecar',
+  entrypoint: path.join(desktopRoot, 'sidecars/superai-agent-sidecar.ts'),
+  outfileBase: path.join(binariesDir, `superai-agent-sidecar-${targetTriple}`),
+  productName: 'SuperAI Agent Sidecar',
   bunTarget,
   // 合并 sidecar 不能 hide console: 它要把 server / adapter 子进程的
   // stdout 转发给 Tauri Rust 端的 println!()，hideConsole 会让 stdio
@@ -43,9 +43,9 @@ await compileExecutable({
 // 独立的 TUI 二进制：用户从命令行/资源管理器直接运行，进入 Ink TUI。
 // 跟合并 sidecar 共享同一份 cli.tsx 代码，但不需要 mode 前缀。
 await compileExecutable({
-  entrypoint: path.join(desktopRoot, 'sidecars/claude-haha-tui.ts'),
-  outfileBase: path.join(binariesDir, `claude-haha-tui-${targetTriple}`),
-  productName: 'Claude Code Haha TUI',
+  entrypoint: path.join(desktopRoot, 'sidecars/superai-agent-tui.ts'),
+  outfileBase: path.join(binariesDir, `superai-agent-tui-${targetTriple}`),
+  productName: 'SuperAI Agent TUI',
   bunTarget,
   // TUI 必须保留 console —— 它就是一个终端程序。Windows 下 hideConsole=false
   // 会让 .exe 在被双击时弹出 cmd 窗口，这是预期行为。
@@ -160,7 +160,7 @@ async function compileExecutable({
       autoloadPackageJson: true,
       windows: {
         title: productName,
-        publisher: 'Claude Code',
+        publisher: 'SuperAI Agent',
         description: productName,
         hideConsole,
       },

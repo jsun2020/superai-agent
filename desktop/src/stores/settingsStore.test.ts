@@ -13,7 +13,7 @@ describe('settingsStore locale defaults', () => {
   })
 
   it('keeps a stored locale override', async () => {
-    window.localStorage.setItem('cc-haha-locale', 'en')
+    window.localStorage.setItem('superai-agent-locale', 'en')
 
     const { useSettingsStore } = await import('./settingsStore')
 
