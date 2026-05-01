@@ -217,7 +217,7 @@ export default withMermaid(defineConfig({
       description: 'A locally runnable version repaired from the leaked Claude Code source, with support for any Anthropic-compatible API endpoint.',
       themeConfig: {
         editLink: {
-          pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
+          pattern: 'https://github.com/jsun2020/superai-agent/edit/main/docs/:path',
           text: 'Edit this page on GitHub',
         },
         nav: [
@@ -231,14 +231,14 @@ export default withMermaid(defineConfig({
 
   themeConfig: {
     editLink: {
-      pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
+      pattern: 'https://github.com/jsun2020/superai-agent/edit/main/docs/:path',
       text: '在 GitHub 上编辑此页',
     },
     search: {
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/NanmiCoder/cc-haha' },
+      { icon: 'github', link: 'https://github.com/jsun2020/superai-agent' },
     ],
     footer: {
       message: 'Released under the MIT License.',

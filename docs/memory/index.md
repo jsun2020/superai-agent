@@ -113,9 +113,9 @@ Claude 的"做梦"机制——后台静默整合记忆的深度解析，涵盖�
 
 ## 🔗 相关资源
 
-- [Claude Code Haha 主页](/)
-- [记忆系统源码](https://github.com/NanmiCoder/cc-haha/tree/main/src/memdir/)
-- [自动提取服务](https://github.com/NanmiCoder/cc-haha/tree/main/src/services/extractMemories/)
-- [AutoDream 服务](https://github.com/NanmiCoder/cc-haha/tree/main/src/services/autoDream/)
-- [DreamTask 任务](https://github.com/NanmiCoder/cc-haha/tree/main/src/tasks/DreamTask/)
-- [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues)
+- [SuperAI Agent 主页](/)
+- [记忆系统源码](https://github.com/jsun2020/superai-agent/tree/main/src/memdir/)
+- [自动提取服务](https://github.com/jsun2020/superai-agent/tree/main/src/services/extractMemories/)
+- [AutoDream 服务](https://github.com/jsun2020/superai-agent/tree/main/src/services/autoDream/)
+- [DreamTask 任务](https://github.com/jsun2020/superai-agent/tree/main/src/tasks/DreamTask/)
+- [GitHub Issues](https://github.com/jsun2020/superai-agent/issues)

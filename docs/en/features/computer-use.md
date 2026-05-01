@@ -131,7 +131,7 @@ Add your terminal app as well. You may need to **restart your terminal** after g
 ### 4. Start
 
 ```bash
-./bin/claude-haha
+./bin/superai-agent
 ```
 
 ### 5. Use

@@ -138,7 +138,7 @@ open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapt
 ### 4. 启动
 
 ```bash
-./bin/claude-haha
+./bin/superai-agent
 ```
 
 ### 5. 使用

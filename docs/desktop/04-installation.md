@@ -2,7 +2,7 @@
 
 ## 下载
 
-前往 [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases) 下载对应平台的安装包：
+前往 [GitHub Releases](https://github.com/jsun2020/superai-agent/releases) 下载对应平台的安装包：
 
 | 平台 | 文件 |
 |------|------|

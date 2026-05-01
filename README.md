@@ -1,16 +1,16 @@
-# Claude Code Haha
+# SuperAI Agent
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="Claude Code Haha" width="240">
+  <img src="docs/images/app-icon.png" alt="SuperAI Agent" width="240">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/jsun2020/superai-agent?style=social)](https://github.com/jsun2020/superai-agent/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/jsun2020/superai-agent?style=social)](https://github.com/jsun2020/superai-agent/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/jsun2020/superai-agent)](https://github.com/jsun2020/superai-agent/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/jsun2020/superai-agent)](https://github.com/jsun2020/superai-agent/pulls)
+[![License](https://img.shields.io/github/license/jsun2020/superai-agent)](https://github.com/jsun2020/superai-agent/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
 [![Docs](https://img.shields.io/badge/📖_文档站点-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
@@ -37,7 +37,7 @@
 - **Channel 系统**（通过 Telegram/飞书/Discord 等 IM 远程控制 Agent）— [架构解析](docs/channel/01-channel-system.md)
 - **Computer Use 桌面控制** — [功能指南](docs/features/computer-use.md) | [架构解析](docs/features/computer-use-architecture.md)
 - **桌面端**（Tauri 2 + React 图形化客户端，多标签多会话）— [文档](docs/desktop/)
-- 降级 Recovery CLI 模式（`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha`）
+- 降级 Recovery CLI 模式（`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/superai-agent`）
 
 ---
 
@@ -63,7 +63,7 @@
 ## 桌面端预览
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows-D97757?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="https://github.com/jsun2020/superai-agent/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows-D97757?style=for-the-badge" alt="下载桌面端"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
@@ -113,9 +113,9 @@ cp .env.example .env
 #### macOS / Linux
 
 ```bash
-./bin/claude-haha                          # 交互 TUI 模式
-./bin/claude-haha -p "your prompt here"    # 无头模式
-./bin/claude-haha --help                   # 查看所有选项
+./bin/superai-agent                          # 交互 TUI 模式
+./bin/superai-agent -p "your prompt here"    # 无头模式
+./bin/superai-agent --help                   # 查看所有选项
 ```
 
 #### Windows
@@ -127,7 +127,7 @@ cp .env.example .env
 bun --env-file=.env ./src/entrypoints/cli.tsx
 
 # 或在 Git Bash 中运行
-./bin/claude-haha
+./bin/superai-agent
 ```
 
 ### 4. 全局使用（可选）
@@ -135,7 +135,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 将 `bin/` 加入 PATH 后可在任意目录启动，详见 [全局使用指南](docs/guide/global-usage.md)：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/superai-agent/bin:$PATH"
 ```
 
 ### 5. 桌面端联调（Desktop）
@@ -145,7 +145,7 @@ export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
 #### 5.1 启动服务端
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha
+cd /Users/nanmi/workspace/myself_code/superai-agent
 SERVER_PORT=3456 bun run src/server/index.ts
 ```
 
@@ -158,7 +158,7 @@ curl http://127.0.0.1:3456/health
 #### 5.2 启动桌面前端
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha/desktop
+cd /Users/nanmi/workspace/myself_code/superai-agent/desktop
 bun run dev --host 127.0.0.1 --port 2024
 ```
 
@@ -201,7 +201,7 @@ http://127.0.0.1:2024
 | [Channel 系统](docs/channel/01-channel-system.md) | 通过 Telegram/飞书/Discord 等 IM 平台远程控制 Agent |
 | [Computer Use](docs/features/computer-use.md) | 桌面控制功能（截屏、鼠标、键盘）— [架构解析](docs/features/computer-use-architecture.md) |
 | [桌面端](docs/desktop/) | Tauri 2 + React 图形化客户端 — [快速上手](docs/desktop/01-quick-start.md) \| [架构设计](docs/desktop/02-architecture.md) \| [安装指南](docs/desktop/04-installation.md) |
-| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 claude-haha |
+| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 superai-agent |
 | [常见问题](docs/guide/faq.md) | 常见错误排查 |
 | [源码修复记录](docs/reference/fixes.md) | 相对于原始泄露源码的修复内容 |
 | [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |

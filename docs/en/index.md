@@ -2,19 +2,19 @@
 layout: home
 
 hero:
-  name: Claude Code Haha
+  name: SuperAI Agent
   text: Locally Runnable Claude Code
   tagline: Repaired from leaked source, supports any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.)
   image:
     src: /images/logo-horizontal.png
-    alt: Claude Code Haha
+    alt: SuperAI Agent
   actions:
     - theme: brand
       text: Quick Start
       link: /en/guide/quick-start
     - theme: alt
       text: GitHub
-      link: https://github.com/NanmiCoder/cc-haha
+      link: https://github.com/jsun2020/superai-agent
 
 features:
   - icon: "\U0001F5A5"

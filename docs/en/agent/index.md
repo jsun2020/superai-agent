@@ -121,9 +121,9 @@ All diagrams use a dark background (#1a1a2e) with Anthropic brand copper-orange 
 
 ## Related Resources
 
-- [Claude Code Haha Home](/)
+- [SuperAI Agent Home](/)
 - [Memory System Documentation](/en/memory/01-usage-guide)
-- [Agent Tool Source Code](https://github.com/NanmiCoder/cc-haha/tree/main/src/tools/AgentTool/)
-- [Swarm Infrastructure](https://github.com/NanmiCoder/cc-haha/tree/main/src/utils/swarm/)
-- [Task Management System](https://github.com/NanmiCoder/cc-haha/tree/main/src/tasks/)
-- [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues)
+- [Agent Tool Source Code](https://github.com/jsun2020/superai-agent/tree/main/src/tools/AgentTool/)
+- [Swarm Infrastructure](https://github.com/jsun2020/superai-agent/tree/main/src/utils/swarm/)
+- [Task Management System](https://github.com/jsun2020/superai-agent/tree/main/src/tasks/)
+- [GitHub Issues](https://github.com/jsun2020/superai-agent/issues)

@@ -2,7 +2,7 @@
 
 
 ```text
-bin/claude-haha          # Entry script
+bin/superai-agent          # Entry script
 preload.ts               # Bun preload (sets MACRO globals)
 .env.example             # Environment variable template
 src/

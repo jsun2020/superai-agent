@@ -91,10 +91,10 @@
 **启动流程**：
 
 1. `reserve_local_port()` — 绑定 `127.0.0.1:0` 获取 OS 随机端口，再释放
-2. `start_server_sidecar(port)` — 启动 `claude-sidecar server --host 127.0.0.1 --port {port}`
+2. `start_server_sidecar(port)` — 启动 `superai-agent-sidecar server --host 127.0.0.1 --port {port}`
 3. `wait_for_server()` — TCP 探活轮询，150ms 间隔，10s 超时
 4. WebView 加载 React 应用
-5. `start_adapters_sidecar()` — 启动 `claude-sidecar adapters --feishu --telegram`，注入 `ADAPTER_SERVER_URL` 环境变量
+5. `start_adapters_sidecar()` — 启动 `superai-agent-sidecar adapters --feishu --telegram`，注入 `ADAPTER_SERVER_URL` 环境变量
 
 **退出处理**：`RunEvent::Exit` / `ExitRequested` 时自动 kill 两个 sidecar。
 
@@ -132,7 +132,7 @@ Server 为每个 Session spawn 一个 CLI 子进程，通过 stdin/stdout JSON �
 
 使用 Bun 编译为独立二进制（`desktop/scripts/build-sidecars.ts`）：
 
-三种模式共用一个入口 `desktop/sidecars/claude-sidecar.ts`：
+三种模式共用一个入口 `desktop/sidecars/superai-agent-sidecar.ts`：
 - `server` — 启动 HTTP/WS 服务
 - `cli` — 启动 CLI 子进程
 - `adapters` — 启动 IM 适配器（解析 `--feishu`/`--telegram` 参数，检查凭据后按需加载）
@@ -358,7 +358,7 @@ desktop/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── sidecars/
-│   └── claude-sidecar.ts            #   统一入口 (server/cli/adapters)
+│   └── superai-agent-sidecar.ts            #   统一入口 (server/cli/adapters)
 └── scripts/
     ├── build-sidecars.ts
     ├── build-macos-arm64.sh
