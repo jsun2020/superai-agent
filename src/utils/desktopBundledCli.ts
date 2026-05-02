@@ -12,7 +12,7 @@ export function resolveBundledCliPathFromExecPath(
 ): string | null {
   const execName = path.basename(execPath)
 
-  if (execName.startsWith('claude-sidecar')) {
+  if (execName.startsWith('claude-sidecar') || execName.startsWith('superai-agent-sidecar')) {
     return execPath
   }
 
@@ -20,6 +20,14 @@ export function resolveBundledCliPathFromExecPath(
     const bundledCliPath = path.join(
       path.dirname(execPath),
       execName.replace(/^claude-server/, 'claude-cli'),
+    )
+    return fs.existsSync(bundledCliPath) ? bundledCliPath : null
+  }
+
+  if (execName.startsWith('superai-agent-server')) {
+    const bundledCliPath = path.join(
+      path.dirname(execPath),
+      execName.replace(/^superai-agent-server/, 'superai-agent-cli'),
     )
     return fs.existsSync(bundledCliPath) ? bundledCliPath : null
   }
@@ -47,7 +55,7 @@ export function resolveClaudeCliLauncher(options?: {
   }
 
   const cliBaseName = path.basename(command)
-  if (cliBaseName.startsWith('claude-sidecar')) {
+  if (cliBaseName.startsWith('claude-sidecar') || cliBaseName.startsWith('superai-agent-sidecar')) {
     return {
       command,
       kind: 'sidecar',
@@ -55,7 +63,7 @@ export function resolveClaudeCliLauncher(options?: {
     }
   }
 
-  if (cliBaseName.startsWith('claude-cli')) {
+  if (cliBaseName.startsWith('claude-cli') || cliBaseName.startsWith('superai-agent-cli')) {
     return {
       command,
       kind: 'binary',
