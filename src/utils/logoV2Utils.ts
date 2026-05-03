@@ -14,6 +14,23 @@ import { gt } from './semver.js'
 import { loadMessageLogs } from './sessionStorage.js'
 import { getInitialSettings } from './settings/settings.js'
 
+// When ANTHROPIC_BASE_URL points to a non-Anthropic host the user is on a
+// third-party proxy (Yunwu, Kimi, etc.) using API-key billing — show the host
+// instead of any leftover Claude.ai OAuth subscription label.
+function getThirdPartyProviderHost(): string | null {
+  const baseUrl = process.env.ANTHROPIC_BASE_URL
+  if (!baseUrl) return null
+  try {
+    const host = new URL(baseUrl).host
+    if (host === 'api.anthropic.com' || host.endsWith('.anthropic.com')) {
+      return null
+    }
+    return host
+  } catch {
+    return null
+  }
+}
+
 // Layout constants
 const MAX_LEFT_WIDTH = 50
 const MAX_USERNAME_LENGTH = 20
@@ -253,9 +270,12 @@ export function getLogoDisplayData(): {
   const cwd = serverUrl
     ? `${displayPath} in ${serverUrl.replace(/^https?:\/\//, '')}`
     : displayPath
-  const billingType = isClaudeAISubscriber()
-    ? getSubscriptionName()
-    : 'API Usage Billing'
+  const providerHost = getThirdPartyProviderHost()
+  const billingType = providerHost
+    ? `API · ${providerHost}`
+    : isClaudeAISubscriber()
+      ? getSubscriptionName()
+      : 'API Usage Billing'
   const agentName = getInitialSettings().agent
 
   return {
