@@ -112,10 +112,28 @@ export function isAnthropicAuthEnabled(): boolean {
     return !!process.env.CLAUDE_CODE_OAUTH_TOKEN
   }
 
+  // ANTHROPIC_BASE_URL pointing to a non-Anthropic host means the user is on
+  // a third-party proxy (Yunwu, Kimi, etc.). Their stored Claude.ai OAuth
+  // tokens are not accepted there — sending Bearer <oauth-token> to the proxy
+  // returns 401/429 "invalid token". Treat this as 3P so OAuth is disabled
+  // and the request falls back to x-api-key from ANTHROPIC_API_KEY.
+  let isThirdPartyBaseUrl = false
+  const baseUrl = process.env.ANTHROPIC_BASE_URL
+  if (baseUrl) {
+    try {
+      const host = new URL(baseUrl).host
+      isThirdPartyBaseUrl =
+        host !== 'api.anthropic.com' && !host.endsWith('.anthropic.com')
+    } catch {
+      // malformed URL — leave isThirdPartyBaseUrl=false
+    }
+  }
+
   const is3P =
     isEnvTruthy(process.env.CLAUDE_CODE_USE_BEDROCK) ||
     isEnvTruthy(process.env.CLAUDE_CODE_USE_VERTEX) ||
-    isEnvTruthy(process.env.CLAUDE_CODE_USE_FOUNDRY)
+    isEnvTruthy(process.env.CLAUDE_CODE_USE_FOUNDRY) ||
+    isThirdPartyBaseUrl
 
   // Check if user has configured an external API key source
   // This allows externally-provided API keys to work (without requiring proxy configuration)
@@ -259,6 +277,25 @@ export function getAnthropicApiKeyWithSource(
     return {
       key: apiKeyEnv,
       source: 'ANTHROPIC_API_KEY',
+    }
+  }
+
+  // ANTHROPIC_BASE_URL pointing to a non-Anthropic host means we're on a
+  // third-party proxy (Yunwu/Kimi/etc.). Skip the customApiKeyResponses
+  // approval gate — that flow exists to confirm sending the user's key to
+  // Anthropic, but here the key is for the third-party endpoint and the
+  // user has already chosen it via their provider config.
+  if (apiKeyEnv) {
+    const baseUrl = process.env.ANTHROPIC_BASE_URL
+    if (baseUrl) {
+      try {
+        const host = new URL(baseUrl).host
+        if (host !== 'api.anthropic.com' && !host.endsWith('.anthropic.com')) {
+          return { key: apiKeyEnv, source: 'ANTHROPIC_API_KEY' }
+        }
+      } catch {
+        // ignore malformed URL
+      }
     }
   }
 
