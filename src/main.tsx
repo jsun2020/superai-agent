@@ -87,7 +87,7 @@ import { initializeAnalyticsGates } from 'src/services/analytics/sink.js';
 import { getOriginalCwd, setAdditionalDirectoriesForClaudeMd, setIsRemoteMode, setMainLoopModelOverride, setMainThreadAgentType, setTeleportedSessionInfo } from './bootstrap/state.js';
 import { filterCommandsForRemoteMode, getCommands } from './commands.js';
 import type { StatsStore } from './context/stats.js';
-import { launchAssistantInstallWizard, launchAssistantSessionChooser, launchInvalidSettingsDialog, launchResumeChooser, launchSnapshotUpdateDialog, launchTeleportRepoMismatchDialog, launchTeleportResumeWrapper } from './dialogLaunchers.js';
+import { launchAssistantInstallWizard, launchAssistantSessionChooser, launchResumeChooser, launchSnapshotUpdateDialog, launchTeleportRepoMismatchDialog, launchTeleportResumeWrapper } from './dialogLaunchers.js';
 import { SHOW_CURSOR } from './ink/termio/dec.js';
 import { exitWithError, exitWithMessage, getRenderContext, renderAndRun, showSetupScreens } from './interactiveHelpers.js';
 import { initBuiltinPlugins } from './plugins/bundled/index.js';
@@ -2326,18 +2326,19 @@ async function run(): Promise<CommanderCommand> {
     // Must be after inline plugins are set (if any) so --plugin-dir LSP servers are included.
     initializeLspServerManager();
 
-    // Show settings validation errors after trust is established
-    // MCP config errors don't block settings from loading, so exclude them
+    // Settings validation: SuperAI Agent shares ~/.claude/ with Claude Code.
+    // When the two products' Zod schemas diverge (e.g. an old Claude Code
+    // permissions.defaultMode value we no longer accept), the user-settings
+    // file fails validation. The parser already returns null for the bad
+    // file, so the app continues fine — we just skip the blocking dialog.
+    // Debug log preserves visibility for users who need to investigate.
     if (!isNonInteractiveSession) {
       const {
         errors
       } = getSettingsWithErrors();
       const nonMcpErrors = errors.filter(e => !e.mcpErrorMetadata);
       if (nonMcpErrors.length > 0) {
-        await launchInvalidSettingsDialog(root, {
-          settingsErrors: nonMcpErrors,
-          onExit: () => gracefulShutdownSync(1)
-        });
+        logForDebugging(`Skipping ${nonMcpErrors.length} invalid settings file(s); continuing without them`);
       }
     }
 
