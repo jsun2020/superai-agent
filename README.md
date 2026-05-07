@@ -1,7 +1,7 @@
 # SuperAI Agent
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="SuperAI Agent" width="240">
+  <img src="docs/images/logo.png" alt="SuperAI Agent" width="240">
 </p>
 
 <div align="center">
