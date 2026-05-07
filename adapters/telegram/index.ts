@@ -498,6 +498,22 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
         } else {
           await bot.api.sendMessage(numericChatId, '⚠️ 会话上下文已失效，请发送 /new 新建会话。')
         }
+      } else if (msg.message && /Working directory does not exist/i.test(msg.message)) {
+        clearTransientChatState(chatId)
+        bridge.resetSession(chatId)
+        sessionStore.delete(chatId)
+        const fallback = config.defaultProjectDir
+        if (fallback) {
+          await bot.api.sendMessage(numericChatId, '⚠️ 之前绑定的项目目录已失效，正在切换到默认项目...')
+          const ok = await createSessionForChat(chatId, fallback)
+          if (ok) {
+            await bot.api.sendMessage(numericChatId, '✅ 已重建会话，请重新发送消息。')
+          } else {
+            await bot.api.sendMessage(numericChatId, '❌ 重建会话失败，请发送 /new <项目名> 手动新建。')
+          }
+        } else {
+          await bot.api.sendMessage(numericChatId, '⚠️ 之前绑定的项目目录已失效。请发送 /new 选择新项目。')
+        }
       } else {
         await bot.api.sendMessage(numericChatId, `❌ ${msg.message}`)
       }
