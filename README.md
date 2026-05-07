@@ -13,14 +13,13 @@
 [![License](https://img.shields.io/github/license/jsun2020/superai-agent)](https://github.com/jsun2020/superai-agent/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_文档站点-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
 
 </div>
 
-基于 Claude Code 泄露源码修复的**本地可运行版本**，支持接入任意 Anthropic 兼容 API（MiniMax、OpenRouter 等）。在完整 TUI 之外，还补全了 Computer Use（macOS / Windows）、打造了图形化**桌面端**，并支持通过 Telegram / 飞书**完整远程驱动**。
+SuperAI Agent 是一个本地可运行的 AI 编码代理：完整的终端 TUI、图形化**桌面端**，支持任意 Anthropic 兼容 API（MiniMax、OpenRouter 等）。内置 Computer Use（macOS / Windows）、记忆系统、多 Agent 编排，并可通过 Telegram / 飞书 / 微信公众号**完整远程驱动**。
 
 <p align="center">
-  <a href="#功能">功能</a> · <a href="#桌面端预览">桌面端</a> · <a href="#架构概览">架构概览</a> · <a href="#快速开始">快速开始</a> · <a href="docs/guide/env-vars.md">环境变量</a> · <a href="docs/guide/faq.md">FAQ</a> · <a href="docs/guide/global-usage.md">全局使用</a> · <a href="#更多文档">更多文档</a>
+  <a href="#功能">功能</a> · <a href="#桌面端">桌面端</a> · <a href="#快速开始">快速开始</a> · <a href="docs/guide/env-vars.md">环境变量</a> · <a href="docs/guide/faq.md">FAQ</a> · <a href="docs/guide/global-usage.md">全局使用</a> · <a href="#更多文档">更多文档</a>
 </p>
 
 ---
@@ -41,26 +40,7 @@
 
 ---
 
-## 架构概览
-
-<table>
-  <tr>
-    <td align="center" width="25%"><img src="docs/images/01-overall-architecture.png" alt="整体架构"><br><b>整体架构</b></td>
-    <td align="center" width="25%"><img src="docs/images/02-request-lifecycle.png" alt="请求生命周期"><br><b>请求生命周期</b></td>
-    <td align="center" width="25%"><img src="docs/images/03-tool-system.png" alt="工具系统"><br><b>工具系统</b></td>
-    <td align="center" width="25%"><img src="docs/images/04-multi-agent.png" alt="多 Agent 架构"><br><b>多 Agent 架构</b></td>
-  </tr>
-  <tr>
-    <td align="center" width="25%"><img src="docs/images/05-terminal-ui.png" alt="终端 UI"><br><b>终端 UI</b></td>
-    <td align="center" width="25%"><img src="docs/images/06-permission-security.png" alt="权限与安全"><br><b>权限与安全</b></td>
-    <td align="center" width="25%"><img src="docs/images/07-services-layer.png" alt="服务层"><br><b>服务层</b></td>
-    <td align="center" width="25%"><img src="docs/images/08-state-data-flow.png" alt="状态与数据流"><br><b>状态与数据流</b></td>
-  </tr>
-</table>
-
----
-
-## 桌面端预览
+## 桌面端
 
 <p align="center">
   <a href="https://github.com/jsun2020/superai-agent/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows-D97757?style=for-the-badge" alt="下载桌面端"></a>
@@ -68,18 +48,7 @@
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
 
-<table>
-  <tr>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/01_full_ui.png" alt="主界面"><br><b>主界面</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/02_edit_code.png" alt="代码编辑"><br><b>代码编辑 & Diff 视图</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/03_ask_question_and_permission.png" alt="权限控制"><br><b>权限控制 & AI 提问</b></td>
-  </tr>
-  <tr>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/05_settings.png" alt="提供商设置"><br><b>多提供商管理</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/08_scheduled_task.png" alt="定时任务"><br><b>定时任务</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/07_im.png" alt="IM 适配器"><br><b>IM 适配器（Telegram / 飞书）</b></td>
-  </tr>
-</table>
+桌面端基于 Tauri 2 + React，支持多标签多会话、代码编辑与 Diff、权限控制、多提供商管理、定时任务，以及 Telegram / 飞书 / 微信公众号 IM 适配器。详见 [桌面端文档](docs/desktop/)。
 
 ---
 
@@ -144,8 +113,9 @@ export PATH="$HOME/path/to/superai-agent/bin:$PATH"
 
 #### 5.1 启动服务端
 
+在项目根目录运行：
+
 ```bash
-cd /Users/nanmi/workspace/myself_code/superai-agent
 SERVER_PORT=3456 bun run src/server/index.ts
 ```
 
@@ -158,7 +128,7 @@ curl http://127.0.0.1:3456/health
 #### 5.2 启动桌面前端
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/superai-agent/desktop
+cd desktop
 bun run dev --host 127.0.0.1 --port 2024
 ```
 
@@ -208,43 +178,7 @@ http://127.0.0.1:2024
 
 ---
 
-## 赞助与合作
 
-本项目由个人利用业余时间维护，欢迎企业或个人赞助支持持续开发，也可洽谈定制、集成或商务合作。
+## 免责声明
 
-| 赞助商 | 介绍 |
-|------|------|
-| <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) 住宅代理专为账号注册与自动化打造，提供 74M+ 真实住宅 IP、195+ 国家覆盖、HTTP/3 高速连接，$0.60/GB 起。 |
-
-📧 **联系邮箱**：relakkes@gmail.com
-
----
-
-## ☕ 请作者喝杯咖啡
-
-如果这个项目对您有帮助，欢迎打赏支持，您的每一份支持都是我持续更新的动力 ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="微信赞赏"><br>
-<b>微信赞赏</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="支付宝"><br>
-<b>支付宝</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
-
-## Disclaimer
-
-本仓库基于 2026-03-31 从 Anthropic npm registry 泄露的 Claude Code 源码。所有原始源码版权归 [Anthropic](https://www.anthropic.com) 所有。仅供学习和研究用途。
+本项目仅供学习与研究使用。使用过程中请遵守所对接 API 服务商的服务条款与相关法律法规。Claude Code 上游版权归 [Anthropic](https://www.anthropic.com) 所有。

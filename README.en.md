@@ -13,14 +13,13 @@
 [![License](https://img.shields.io/github/license/jsun2020/superai-agent)](https://github.com/jsun2020/superai-agent/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-green)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-当前-blue)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_Documentation-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
 
 </div>
 
-A **locally runnable version** repaired from the leaked Claude Code source, with support for any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.). Beyond the full TUI, we've also completed Computer Use (macOS / Windows), built a GUI **desktop app**, and enabled **full remote control** via Telegram / Feishu.
+SuperAI Agent is a locally runnable AI coding agent: a full terminal TUI plus a graphical **desktop client**, with support for any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.). It includes Computer Use (macOS / Windows), a memory system, multi-agent orchestration, and **full remote control** via Telegram / Feishu / WeChat Official Account.
 
 <p align="center">
-  <a href="#features">Features</a> · <a href="#desktop-preview">Desktop</a> · <a href="#architecture-overview">Architecture</a> · <a href="#quick-start">Quick Start</a> · <a href="docs/en/guide/env-vars.md">Env Vars</a> · <a href="docs/en/guide/faq.md">FAQ</a> · <a href="docs/en/guide/global-usage.md">Global Usage</a> · <a href="#more-documentation">More Docs</a>
+  <a href="#features">Features</a> · <a href="#desktop">Desktop</a> · <a href="#quick-start">Quick Start</a> · <a href="docs/en/guide/env-vars.md">Env Vars</a> · <a href="docs/en/guide/faq.md">FAQ</a> · <a href="docs/en/guide/global-usage.md">Global Usage</a> · <a href="#more-documentation">More Docs</a>
 </p>
 
 ---
@@ -41,26 +40,7 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 
 ---
 
-## Architecture Overview
-
-<table>
-  <tr>
-    <td align="center" width="25%"><img src="docs/images/01-overall-architecture.png" alt="Overall architecture"><br><b>Overall architecture</b></td>
-    <td align="center" width="25%"><img src="docs/images/02-request-lifecycle.png" alt="Request lifecycle"><br><b>Request lifecycle</b></td>
-    <td align="center" width="25%"><img src="docs/images/03-tool-system.png" alt="Tool system"><br><b>Tool system</b></td>
-    <td align="center" width="25%"><img src="docs/images/04-multi-agent.png" alt="Multi-agent architecture"><br><b>Multi-agent architecture</b></td>
-  </tr>
-  <tr>
-    <td align="center" width="25%"><img src="docs/images/05-terminal-ui.png" alt="Terminal UI"><br><b>Terminal UI</b></td>
-    <td align="center" width="25%"><img src="docs/images/06-permission-security.png" alt="Permissions and security"><br><b>Permissions and security</b></td>
-    <td align="center" width="25%"><img src="docs/images/07-services-layer.png" alt="Services layer"><br><b>Services layer</b></td>
-    <td align="center" width="25%"><img src="docs/images/08-state-data-flow.png" alt="State and data flow"><br><b>State and data flow</b></td>
-  </tr>
-</table>
-
----
-
-## Desktop Preview
+## Desktop
 
 <p align="center">
   <a href="https://github.com/jsun2020/superai-agent/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-D97757?style=for-the-badge" alt="Download Desktop"></a>
@@ -68,18 +48,7 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
 
-<table>
-  <tr>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/01_full_ui.png" alt="Main UI"><br><b>Main Interface</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/02_edit_code.png" alt="Code Editing"><br><b>Code Editing & Diff View</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/03_ask_question_and_permission.png" alt="Permission Control"><br><b>Permission Control & AI Questions</b></td>
-  </tr>
-  <tr>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/05_settings.png" alt="Provider Settings"><br><b>Multi-Provider Management</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/08_scheduled_task.png" alt="Scheduled Tasks"><br><b>Scheduled Tasks</b></td>
-    <td align="center" width="33%"><img src="docs/images/desktop_ui/07_im.png" alt="IM Adapters"><br><b>IM Adapters (Telegram / Feishu)</b></td>
-  </tr>
-</table>
+The desktop client is built on Tauri 2 + React, with multi-tab/multi-session support, code editing and diff view, permission control, multi-provider management, scheduled tasks, and Telegram / Feishu / WeChat Official Account IM adapters. See [desktop docs](docs/desktop/).
 
 ---
 
@@ -144,8 +113,9 @@ If you are developing or testing the `desktop/` frontend, start both the API ser
 
 #### 5.1 Start the API server
 
+From the project root:
+
 ```bash
-cd /Users/nanmi/workspace/myself_code/superai-agent
 SERVER_PORT=3456 bun run src/server/index.ts
 ```
 
@@ -158,7 +128,7 @@ curl http://127.0.0.1:3456/health
 #### 5.2 Start the desktop frontend
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/superai-agent/desktop
+cd desktop
 bun run dev --host 127.0.0.1 --port 2024
 ```
 
@@ -208,43 +178,6 @@ http://127.0.0.1:2024
 
 ---
 
-## Sponsorship & Partnership
-
-This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
-
-| Sponsor | Description |
-|------|------|
-| <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) provides residential proxies built for account registration and automation, with 74M+ real residential IPs, 195+ countries, HTTP/3 high-speed connections, starting at $0.60/GB. |
-
-📧 **Contact**: relakkes@gmail.com
-
----
-
-## ☕ Buy Me a Coffee
-
-If this project helps you, consider buying me a coffee — every bit of support keeps this project going ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="WeChat Pay"><br>
-<b>WeChat Pay</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="Alipay"><br>
-<b>Alipay</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
-
 ## Disclaimer
 
-This repository is based on the Claude Code source leaked from the Anthropic npm registry on 2026-03-31. All original source code copyrights belong to [Anthropic](https://www.anthropic.com). It is provided for learning and research purposes only.
+This project is provided for learning and research purposes only. Please comply with the terms of service of the API providers you use and applicable laws. Upstream Claude Code copyrights belong to [Anthropic](https://www.anthropic.com).
