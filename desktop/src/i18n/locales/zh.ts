@@ -507,7 +507,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.proxySaving': '保存中...',
   'settings.general.proxyTestSuccess': '连接成功（{status}），耗时 {latency} ms',
   'settings.general.proxyTestFailed': '测试失败：{error}',
-  'settings.general.proxySaveSuccess': '已保存。重启应用后新会话将使用新代理。',
+  'settings.general.proxySaveSuccess': '已保存。必须完全退出并重新启动 SuperAIAgent.exe 后代理才会生效（供应商测试、消息发送等）。Bun 仅在进程启动时读取 HTTPS_PROXY。',
   'settings.general.proxyHostRequired': '启用代理时必须填写地址',
   'settings.general.proxyPortRequired': '端口范围 1-65535',
   'settings.general.proxyNtlmHintTitle': '检测到 NTLM 代理',

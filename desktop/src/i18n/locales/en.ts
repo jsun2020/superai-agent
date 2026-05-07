@@ -505,7 +505,7 @@ export const en = {
   'settings.general.proxySaving': 'Saving...',
   'settings.general.proxyTestSuccess': 'Connected ({status}) in {latency} ms',
   'settings.general.proxyTestFailed': 'Test failed: {error}',
-  'settings.general.proxySaveSuccess': 'Saved. Restart the app for new conversations to use the proxy.',
+  'settings.general.proxySaveSuccess': 'Saved. You must fully quit and relaunch SuperAIAgent.exe before the proxy takes effect (provider tests, message sends, etc.). Bun snapshots HTTPS_PROXY at process start.',
   'settings.general.proxyHostRequired': 'Address is required when proxy is enabled',
   'settings.general.proxyPortRequired': 'Port must be 1-65535',
   'settings.general.proxyNtlmHintTitle': 'NTLM proxy detected',

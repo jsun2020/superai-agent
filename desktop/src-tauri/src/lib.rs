@@ -616,6 +616,36 @@ fn resolve_app_root(_app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Read HTTPS_PROXY / HTTP_PROXY / NO_PROXY from
+/// `~/.claude/superai/settings.json` so they can be injected into the
+/// sidecar's spawn env. This MUST happen before spawn — Bun snapshots
+/// HTTPS_PROXY at process start; setting it from inside the sidecar later
+/// has no effect on Bun's native fetch.
+fn read_managed_proxy_env() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(home) = home_dir() else {
+        return out;
+    };
+    let path = home.join(".claude").join("superai").join("settings.json");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return out;
+    };
+    let Some(env) = parsed.get("env").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for key in ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"] {
+        if let Some(value) = env.get(key).and_then(|v| v.as_str()) {
+            if !value.is_empty() {
+                out.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    out
+}
+
 fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     let host = "127.0.0.1";
     let port = reserve_local_port()?;
@@ -624,7 +654,12 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     let app_root_arg = app_root.to_string_lossy().to_string();
 
     // 单一合并 sidecar：第一个参数选 server / cli / adapters 模式。
-    let sidecar = app
+    let proxy_env = read_managed_proxy_env();
+    if !proxy_env.is_empty() {
+        let keys: Vec<&str> = proxy_env.keys().map(|s| s.as_str()).collect();
+        println!("[desktop] injecting proxy env into server sidecar: {:?}", keys);
+    }
+    let mut sidecar = app
         .shell()
         .sidecar("superai-agent-sidecar")
         .map_err(|err| format!("resolve sidecar: {err}"))?
@@ -637,6 +672,9 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
             "--port",
             &port.to_string(),
         ]);
+    for (k, v) in &proxy_env {
+        sidecar = sidecar.env(k, v);
+    }
 
     let (mut rx, child) = sidecar
         .spawn()
@@ -710,7 +748,8 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
         server_http_url.clone()
     };
 
-    let sidecar = app
+    let proxy_env = read_managed_proxy_env();
+    let mut sidecar = app
         .shell()
         .sidecar("superai-agent-sidecar")
         .map_err(|err| format!("resolve sidecar: {err}"))?
@@ -723,6 +762,9 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
             "--telegram",
             "--wechat",
         ]);
+    for (k, v) in &proxy_env {
+        sidecar = sidecar.env(k, v);
+    }
 
     let (mut rx, child) = sidecar
         .spawn()
