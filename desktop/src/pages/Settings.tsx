@@ -854,7 +854,7 @@ type ProxyStatus =
   | { kind: 'testing' }
   | { kind: 'saving' }
   | { kind: 'success'; message: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; result?: ProxyTestResult }
 
 function ProxySettingsCard() {
   const t = useTranslation()
@@ -913,6 +913,7 @@ function ProxySettingsCard() {
         setStatus({
           kind: 'error',
           message: t('settings.general.proxyTestFailed', { error: result.error ?? 'unknown' }),
+          result,
         })
       }
     } catch (e) {
@@ -1033,7 +1034,23 @@ function ProxySettingsCard() {
           <div className="text-xs text-emerald-600">{status.message}</div>
         )}
         {status.kind === 'error' && (
-          <div className="text-xs text-red-600">{status.message}</div>
+          <>
+            <div className="text-xs text-red-600">{status.message}</div>
+            {status.result?.hint === 'ntlm-not-supported' || status.result?.hint === 'negotiate-not-supported' ? (
+              <div className="text-xs rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 leading-5">
+                <div className="font-semibold mb-1">
+                  {t('settings.general.proxyNtlmHintTitle')}
+                </div>
+                {t('settings.general.proxyNtlmHint', {
+                  schemes: (status.result?.authChallenges ?? ['NTLM']).join(' / '),
+                })}
+              </div>
+            ) : status.result?.hint === 'auth-required' ? (
+              <div className="text-xs rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 leading-5">
+                {t('settings.general.proxyAuthRequiredHint')}
+              </div>
+            ) : null}
+          </>
         )}
 
         <div className="flex justify-end gap-2 pt-1">

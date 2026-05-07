@@ -36,4 +36,6 @@ export type ProxyTestResult = {
   status?: number
   latencyMs?: number
   error?: string
+  authChallenges?: string[]
+  hint?: 'ntlm-not-supported' | 'negotiate-not-supported' | 'auth-required'
 }

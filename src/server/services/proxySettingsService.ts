@@ -14,8 +14,8 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import * as net from 'node:net'
 import { ApiError } from '../middleware/errorHandler.js'
-import { request as undiciRequest, ProxyAgent } from 'undici'
 
 export type ProxyConfig = {
   enabled: boolean
@@ -30,6 +30,10 @@ export type ProxyTestResult = {
   status?: number
   latencyMs?: number
   error?: string
+  /** Authentication schemes the proxy demanded if it returned 407. */
+  authChallenges?: string[]
+  /** Hint string the UI can render when a known limitation is detected. */
+  hint?: 'ntlm-not-supported' | 'negotiate-not-supported' | 'auth-required'
 }
 
 const EMPTY_CONFIG: ProxyConfig = {
@@ -134,9 +138,15 @@ export class ProxySettingsService {
     await this.writeSettings(settings)
 
     // Apply to current process so the sidecar's own outgoing calls
-    // (e.g. provider test endpoints) start using the new proxy without
-    // an app restart. Spawned CLI subprocesses still need a session
-    // restart because they inherited env at spawn time.
+    // (e.g. provider connectivity tests via fetch()) start using the new
+    // proxy without an app restart. Bun's native fetch reads HTTPS_PROXY
+    // from process.env on each call — that mutation is what does the
+    // actual work here. configureGlobalAgents() updates axios's proxy
+    // agent for the few code paths still using axios; undici's
+    // setGlobalDispatcher is a no-op in Bun but doesn't hurt.
+    //
+    // Spawned CLI subprocesses still need a session restart because
+    // they inherited env at spawn time.
     if (env.HTTPS_PROXY) {
       process.env.HTTPS_PROXY = String(env.HTTPS_PROXY)
       process.env.HTTP_PROXY = String(env.HTTP_PROXY ?? env.HTTPS_PROXY)
@@ -158,43 +168,144 @@ export class ProxySettingsService {
   }
 
   /**
-   * Probe the candidate proxy by issuing a small HTTPS request through it.
-   * Default target: api.anthropic.com (returns 401 quickly without a key,
-   * which is enough to prove the tunnel is up).
+   * Probe the candidate proxy by speaking raw HTTP CONNECT to it.
+   *
+   * Why a raw socket instead of fetch(): Bun's native fetch honors the
+   * HTTPS_PROXY env var, but it does NOT surface 407 responses as HTTP
+   * status — a 407 with NTLM challenge becomes the opaque "Unable to
+   * connect. Is the computer able to access the url?" error. To tell the
+   * user *why* the proxy refused us (so we can flag NTLM as unsupported),
+   * we open a TCP socket ourselves, send `CONNECT <host>:443`, and parse
+   * the proxy's first response line + `Proxy-Authenticate` headers.
+   *
+   * Target: gstatic.com:443 — Chrome's connectivity-check origin. Almost
+   * always whitelisted by corporate proxies because Chrome itself probes
+   * it constantly. Real Anthropic / yunwu.ai endpoints are often blocked
+   * outright (which would mask an otherwise-working proxy as "broken").
    */
   async testConfig(input: ProxyConfig): Promise<ProxyTestResult> {
     if (!input.enabled || !input.host.trim()) {
       return { ok: false, error: 'Proxy is not configured' }
     }
-    let url: string
-    try {
-      url = this.buildProxyUrl(input)
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    const port = input.port
+    if (port === null || !Number.isFinite(port) || port <= 0 || port > 65535) {
+      return { ok: false, error: 'Proxy port must be 1-65535' }
     }
-    const target = 'https://api.anthropic.com/v1/models'
+    const targetHost = 'www.gstatic.com'
+    const targetPort = 443
     const started = Date.now()
-    try {
-      const dispatcher = new ProxyAgent({
-        uri: url,
-        connectTimeout: 8000,
-        bodyTimeout: 8000,
-        headersTimeout: 8000,
+    return new Promise<ProxyTestResult>((resolve) => {
+      let resolved = false
+      const finish = (r: ProxyTestResult) => {
+        if (resolved) return
+        resolved = true
+        try { socket.destroy() } catch { /* noop */ }
+        resolve(r)
+      }
+      const socket = net.connect({ host: input.host, port, timeout: 8000 })
+      const buffer: Buffer[] = []
+      socket.on('timeout', () => finish({
+        ok: false,
+        latencyMs: Date.now() - started,
+        error: `Timed out connecting to proxy ${input.host}:${port}`,
+      }))
+      socket.on('error', (err) => finish({
+        ok: false,
+        latencyMs: Date.now() - started,
+        error: err.message,
+      }))
+      socket.on('connect', () => {
+        const headers = [
+          `CONNECT ${targetHost}:${targetPort} HTTP/1.1`,
+          `Host: ${targetHost}:${targetPort}`,
+          'User-Agent: superai-agent-proxy-test/1.0',
+          'Proxy-Connection: close',
+        ]
+        if (input.username.trim().length > 0) {
+          const creds = Buffer.from(`${input.username}:${input.password}`, 'utf-8').toString('base64')
+          headers.push(`Proxy-Authorization: Basic ${creds}`)
+        }
+        socket.write(headers.join('\r\n') + '\r\n\r\n')
       })
-      const res = await undiciRequest(target, {
-        method: 'GET',
-        dispatcher,
-        headers: { 'user-agent': 'superai-agent-proxy-test/1.0' },
+      socket.on('data', (chunk) => {
+        buffer.push(chunk)
+        // First "\r\n\r\n" terminates the CONNECT response head.
+        const merged = Buffer.concat(buffer).toString('latin1')
+        const headerEnd = merged.indexOf('\r\n\r\n')
+        if (headerEnd === -1) return
+        finish(parseConnectResponse(merged.slice(0, headerEnd), Date.now() - started))
       })
-      const latency = Date.now() - started
-      // any status (including 401/403) means we tunneled successfully
-      await res.body.dump()
-      return { ok: true, status: res.statusCode, latencyMs: latency }
-    } catch (err) {
-      const latency = Date.now() - started
-      const message = err instanceof Error ? err.message : String(err)
-      return { ok: false, latencyMs: latency, error: message }
+      socket.on('close', () => {
+        // Server closed without a complete response (some proxies do this on
+        // refused auth). Use whatever we got.
+        if (resolved) return
+        const merged = Buffer.concat(buffer).toString('latin1')
+        const headerEnd = merged.indexOf('\r\n\r\n')
+        if (headerEnd !== -1) {
+          finish(parseConnectResponse(merged.slice(0, headerEnd), Date.now() - started))
+        } else {
+          finish({
+            ok: false,
+            latencyMs: Date.now() - started,
+            error: merged.length > 0
+              ? `Proxy closed connection: ${merged.slice(0, 120).trim()}`
+              : 'Proxy closed connection without responding',
+          })
+        }
+      })
+    })
+  }
+}
+
+// ─── HTTP CONNECT response parsing ────────────────────────────────────────
+
+function parseConnectResponse(headBlock: string, latencyMs: number): ProxyTestResult {
+  const lines = headBlock.split(/\r?\n/)
+  const statusLine = lines[0] ?? ''
+  const m = statusLine.match(/^HTTP\/[\d.]+\s+(\d{3})/)
+  const status = m ? Number(m[1]) : 0
+
+  if (status >= 200 && status < 300) {
+    // Tunnel established — proxy accepted us. Don't actually upgrade to TLS;
+    // we already proved what the user needed (auth + reachability).
+    return { ok: true, status, latencyMs }
+  }
+
+  if (status === 407) {
+    const challenges: string[] = []
+    for (const line of lines.slice(1)) {
+      const hm = line.match(/^Proxy-Authenticate:\s*(.+)$/i)
+      if (!hm) continue
+      const scheme = hm[1].trim().match(/^([A-Za-z]+)/)
+      if (scheme) challenges.push(scheme[1])
     }
+    const dedup = [...new Set(challenges)]
+    const lower = dedup.map((s) => s.toLowerCase())
+    const hint: ProxyTestResult['hint'] = lower.includes('ntlm')
+      ? 'ntlm-not-supported'
+      : lower.includes('negotiate')
+        ? 'negotiate-not-supported'
+        : 'auth-required'
+    return {
+      ok: false,
+      status,
+      latencyMs,
+      authChallenges: dedup,
+      hint,
+      error: dedup.length
+        ? `Proxy requires ${dedup.join(', ')} authentication`
+        : 'Proxy returned 407 (authentication required)',
+    }
+  }
+
+  // 4xx/5xx that isn't 407 — proxy reachable but blocked the destination.
+  return {
+    ok: false,
+    status,
+    latencyMs,
+    error: status > 0
+      ? `Proxy returned HTTP ${status}: ${statusLine.replace(/^HTTP\/[\d.]+\s+\d+\s*/, '').trim()}`
+      : `Unrecognized proxy response: ${statusLine.slice(0, 80)}`,
   }
 }
 

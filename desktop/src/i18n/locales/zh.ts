@@ -510,6 +510,9 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.proxySaveSuccess': '已保存。重启应用后新会话将使用新代理。',
   'settings.general.proxyHostRequired': '启用代理时必须填写地址',
   'settings.general.proxyPortRequired': '端口范围 1-65535',
+  'settings.general.proxyNtlmHintTitle': '检测到 NTLM 代理',
+  'settings.general.proxyNtlmHint': '该代理需要 Windows 域认证（{schemes}），内置代理暂不支持。请先安装本地 NTLM 桥接工具（如 px 或 cntlm）并指向该代理，然后在此对话框中将地址改为 127.0.0.1、端口改为桥接端口，账号和密码留空。',
+  'settings.general.proxyAuthRequiredHint': '代理返回 407（需要认证），但未提示 NTLM/Negotiate。请检查账号与密码是否正确。',
 
   // ─── Empty Session ──────────────────────────────────────
   'empty.title': '新建会话',

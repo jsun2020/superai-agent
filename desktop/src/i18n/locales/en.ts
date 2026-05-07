@@ -508,6 +508,9 @@ export const en = {
   'settings.general.proxySaveSuccess': 'Saved. Restart the app for new conversations to use the proxy.',
   'settings.general.proxyHostRequired': 'Address is required when proxy is enabled',
   'settings.general.proxyPortRequired': 'Port must be 1-65535',
+  'settings.general.proxyNtlmHintTitle': 'NTLM proxy detected',
+  'settings.general.proxyNtlmHint': 'Your proxy requires Windows-domain authentication ({schemes}), which the built-in proxy cannot speak. Install a local NTLM bridge (e.g. px or cntlm), point it at this proxy, then in this dialog use Address=127.0.0.1, Port=<bridge port>, and leave Account/Password empty.',
+  'settings.general.proxyAuthRequiredHint': 'The proxy returned 407 (auth required) but did not advertise NTLM/Negotiate. Double-check Account and Password.',
 
   // ─── Empty Session ──────────────────────────────────────
   'empty.title': 'New session',
