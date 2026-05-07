@@ -1,7 +1,7 @@
 /**
  * 用真实的 Provider 配置测试 ProviderService
- * 验证添加、激活、cc-haha/settings.json 同步是否正确
- * (provider env 写到 ~/.claude/cc-haha/settings.json，不污染原版 settings.json)
+ * 验证添加、激活、superai/settings.json 同步是否正确
+ * (provider env 写到 ~/.claude/superai/settings.json，不污染原版 settings.json)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
@@ -34,7 +34,7 @@ describe('Real Provider Configs', () => {
 
   // Helper: read the Haha-specific settings file
   async function readCcHahaSettings(): Promise<Record<string, unknown>> {
-    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
+    const raw = await fs.readFile(path.join(tmpDir, 'superai', 'settings.json'), 'utf-8')
     return JSON.parse(raw)
   }
 
@@ -48,7 +48,7 @@ describe('Real Provider Configs', () => {
     }
   }
 
-  test('添加 MiniMax Provider 并激活 — 写入 cc-haha/settings.json', async () => {
+  test('添加 MiniMax Provider 并激活 — 写入 superai/settings.json', async () => {
     const minimax = await service.addProvider({
       presetId: 'minimax',
       name: 'MiniMax',
@@ -63,7 +63,7 @@ describe('Real Provider Configs', () => {
     // 激活 provider
     await service.activateProvider(minimax.id)
 
-    // 验证写入 cc-haha/settings.json
+    // 验证写入 superai/settings.json
     const settings = await readCcHahaSettings()
     expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.minimaxi.com/anthropic')
     expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk-fake-test-key-for-testing-only')
@@ -72,10 +72,10 @@ describe('Real Provider Configs', () => {
     // 验证原版 settings.json 没有被创建
     expect(await originalSettingsExists()).toBe(false)
 
-    console.log('✅ Provider 写入 cc-haha/settings.json，原版 settings.json 未被污染')
+    console.log('✅ Provider 写入 superai/settings.json，原版 settings.json 未被污染')
   })
 
-  test('切换 Provider — 更新 cc-haha/settings.json', async () => {
+  test('切换 Provider — 更新 superai/settings.json', async () => {
     const minimax = await service.addProvider({
       presetId: 'minimax',
       name: 'MiniMax',
@@ -116,14 +116,14 @@ describe('Real Provider Configs', () => {
     // 原版 settings.json 依然不存在
     expect(await originalSettingsExists()).toBe(false)
 
-    console.log('✅ 切换 Provider 成功，cc-haha/settings.json 更新正确')
+    console.log('✅ 切换 Provider 成功，superai/settings.json 更新正确')
   })
 
-  test('cc-haha/settings.json 保留已有字段', async () => {
-    // 预写一个有内容的 cc-haha/settings.json（模拟用户已有配置）
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+  test('superai/settings.json 保留已有字段', async () => {
+    // 预写一个有内容的 superai/settings.json（模拟用户已有配置）
+    await fs.mkdir(path.join(tmpDir, 'superai'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'settings.json'),
+      path.join(tmpDir, 'superai', 'settings.json'),
       JSON.stringify({
         customField: 'should_be_preserved',
         env: {
@@ -157,7 +157,7 @@ describe('Real Provider Configs', () => {
     expect(settings.customField).toBe('should_be_preserved')
     expect((settings.env as Record<string, string>).EXISTING_VAR).toBe('should_be_preserved')
 
-    console.log('✅ cc-haha/settings.json 已有字段全部保留')
+    console.log('✅ superai/settings.json 已有字段全部保留')
   })
 
   test('activateOfficial 清除 provider env', async () => {
@@ -205,7 +205,7 @@ describe('Real Provider Configs', () => {
     console.log('   error:', result.connectivity.error)
   })
 
-  test('providers.json 和 cc-haha/settings.json 独立于 settings.json', async () => {
+  test('providers.json 和 superai/settings.json 独立于 settings.json', async () => {
     // 模拟原版 Claude Code 的 settings.json 已存在
     await fs.writeFile(
       path.join(tmpDir, 'settings.json'),
@@ -234,7 +234,7 @@ describe('Real Provider Configs', () => {
     expect((original.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('original-key')
     expect(original.effortLevel).toBe('high')
 
-    // 验证 cc-haha/settings.json 是 Haha 自己的
+    // 验证 superai/settings.json 是 Haha 自己的
     const haha = await readCcHahaSettings()
     expect((haha.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.minimaxi.com/anthropic')
     expect((haha.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk-haha-key')

@@ -6,7 +6,8 @@ import { Modal } from '../components/shared/Modal'
 import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
-import type { PermissionMode, EffortLevel, ThemeMode } from '../types/settings'
+import type { PermissionMode, EffortLevel, ThemeMode, ProxyConfig, ProxyTestResult } from '../types/settings'
+import { settingsApi } from '../api/settings'
 import type { Locale } from '../i18n'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -420,7 +421,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     if (!canSubmit) return
     setIsSubmitting(true)
     try {
-      // Write the edited cc-haha settings.json first so provider-specific model
+      // Write the edited superai settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
       if (settingsJson.trim()) {
         try {
@@ -831,6 +832,218 @@ function GeneralSettings() {
             </div>
           </div>
         </label>
+      </div>
+
+      <ProxySettingsCard />
+    </div>
+  )
+}
+
+// ─── Proxy Settings ────────────────────────────────────────
+
+const EMPTY_PROXY: ProxyConfig = {
+  enabled: false,
+  host: '',
+  port: null,
+  username: '',
+  password: '',
+}
+
+type ProxyStatus =
+  | { kind: 'idle' }
+  | { kind: 'testing' }
+  | { kind: 'saving' }
+  | { kind: 'success'; message: string }
+  | { kind: 'error'; message: string }
+
+function ProxySettingsCard() {
+  const t = useTranslation()
+  const [config, setConfig] = useState<ProxyConfig>(EMPTY_PROXY)
+  const [showPassword, setShowPassword] = useState(false)
+  const [status, setStatus] = useState<ProxyStatus>({ kind: 'idle' })
+
+  useEffect(() => {
+    let cancelled = false
+    settingsApi
+      .getProxy()
+      .then((cfg) => {
+        if (!cancelled) setConfig({ ...EMPTY_PROXY, ...cfg })
+      })
+      .catch(() => {
+        // first run: no settings.json — leave defaults
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  function update<K extends keyof ProxyConfig>(key: K, value: ProxyConfig[K]) {
+    setConfig((prev) => ({ ...prev, [key]: value }))
+    setStatus({ kind: 'idle' })
+  }
+
+  function validate(): string | null {
+    if (!config.enabled) return null
+    if (!config.host.trim()) return t('settings.general.proxyHostRequired')
+    const p = config.port
+    if (p === null || !Number.isFinite(p) || p <= 0 || p > 65535) {
+      return t('settings.general.proxyPortRequired')
+    }
+    return null
+  }
+
+  async function handleTest() {
+    const err = validate()
+    if (err) {
+      setStatus({ kind: 'error', message: err })
+      return
+    }
+    setStatus({ kind: 'testing' })
+    try {
+      const result: ProxyTestResult = await settingsApi.testProxy(config)
+      if (result.ok) {
+        setStatus({
+          kind: 'success',
+          message: t('settings.general.proxyTestSuccess', {
+            status: result.status ?? 0,
+            latency: result.latencyMs ?? 0,
+          }),
+        })
+      } else {
+        setStatus({
+          kind: 'error',
+          message: t('settings.general.proxyTestFailed', { error: result.error ?? 'unknown' }),
+        })
+      }
+    } catch (e) {
+      setStatus({
+        kind: 'error',
+        message: t('settings.general.proxyTestFailed', {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      })
+    }
+  }
+
+  async function handleSave() {
+    const err = validate()
+    if (err) {
+      setStatus({ kind: 'error', message: err })
+      return
+    }
+    setStatus({ kind: 'saving' })
+    try {
+      await settingsApi.setProxy(config)
+      setStatus({ kind: 'success', message: t('settings.general.proxySaveSuccess') })
+    } catch (e) {
+      setStatus({
+        kind: 'error',
+        message: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  const disabled = !config.enabled
+  const busy = status.kind === 'testing' || status.kind === 'saving'
+
+  return (
+    <div className="mt-8">
+      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+        {t('settings.general.proxyTitle')}
+      </h2>
+      <p className="text-sm text-[var(--color-text-tertiary)] mb-3">
+        {t('settings.general.proxyDescription')}
+      </p>
+
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-4 space-y-3">
+        <label className="flex items-center justify-between cursor-pointer">
+          <span className="text-sm font-medium text-[var(--color-text-primary)]">
+            {t('settings.general.proxyUseProxy')}
+          </span>
+          <input
+            type="checkbox"
+            checked={config.enabled}
+            onChange={(e) => update('enabled', e.target.checked)}
+            className="h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+            aria-label={t('settings.general.proxyUseProxy')}
+          />
+        </label>
+
+        <div className={`grid grid-cols-[6rem_1fr] gap-x-3 gap-y-2 items-center ${disabled ? 'opacity-50' : ''}`}>
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            {t('settings.general.proxyAddress')}
+          </span>
+          <Input
+            value={config.host}
+            placeholder={t('settings.general.proxyAddressPlaceholder')}
+            onChange={(e) => update('host', e.target.value)}
+            disabled={disabled}
+          />
+
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            {t('settings.general.proxyPort')}
+          </span>
+          <Input
+            type="number"
+            value={config.port === null ? '' : String(config.port)}
+            placeholder="8080"
+            onChange={(e) => {
+              const v = e.target.value.trim()
+              update('port', v === '' ? null : Number(v))
+            }}
+            disabled={disabled}
+          />
+
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            {t('settings.general.proxyAccount')}
+          </span>
+          <Input
+            value={config.username}
+            placeholder={t('settings.general.proxyAccountPlaceholder')}
+            onChange={(e) => update('username', e.target.value)}
+            disabled={disabled}
+            autoComplete="off"
+          />
+
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            {t('settings.general.proxyPassword')}
+          </span>
+          <div className="flex gap-2">
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              value={config.password}
+              placeholder={t('settings.general.proxyPasswordPlaceholder')}
+              onChange={(e) => update('password', e.target.value)}
+              disabled={disabled}
+              autoComplete="new-password"
+              className="flex-1"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="px-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? '👁️‍🗨️' : '👁️'}
+            </button>
+          </div>
+        </div>
+
+        {status.kind === 'success' && (
+          <div className="text-xs text-emerald-600">{status.message}</div>
+        )}
+        {status.kind === 'error' && (
+          <div className="text-xs text-red-600">{status.message}</div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={() => void handleTest()} disabled={busy || disabled}>
+            {status.kind === 'testing' ? t('settings.general.proxyTesting') : t('settings.general.proxyTest')}
+          </Button>
+          <Button variant="primary" onClick={() => void handleSave()} disabled={busy}>
+            {status.kind === 'saving' ? t('settings.general.proxySaving') : t('common.save')}
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -1374,13 +1587,9 @@ function PluginSettings() {
 
 // ─── About Settings ──────────────────────────────────────
 
-const GITHUB_REPO = 'https://github.com/NanmiCoder/cc-haha'
-const AUTHOR_GITHUB = 'https://github.com/NanmiCoder'
-const SOCIAL_LINKS = [
-  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/434377496', label: '程序员阿江-Relakkes' },
-  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE', label: '程序员阿江-Relakkes' },
-  { name: 'Xiaohongshu', icon: '/icons/xiaohongshu.svg', url: 'https://www.xiaohongshu.com/user/profile/5f58bd990000000001003753', label: '程序员阿江-Relakkes' },
-] as const
+const GITHUB_REPO = 'https://github.com/jsun2020/superai-agent'
+const GITHUB_REPO_LABEL = 'jsun2020/superai-agent'
+const AUTHOR_EMAIL = 'jsun2016@live.com'
 
 function AboutSettings() {
   const t = useTranslation()
@@ -1468,7 +1677,7 @@ function AboutSettings() {
         >
           <img src="/icons/github.svg" alt="GitHub" className="w-5 h-5 opacity-70" />
           <div className="flex-1 text-left">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">NanmiCoder/cc-haha</div>
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">{GITHUB_REPO_LABEL}</div>
             <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.about.starHint')}</div>
           </div>
           <span className="material-symbols-outlined text-[16px] text-[var(--color-text-tertiary)]">open_in_new</span>
@@ -1581,39 +1790,13 @@ function AboutSettings() {
       <div className="w-full">
         <h3 className="text-xs font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider mb-3">{t('settings.about.author')}</h3>
         <button
-          onClick={() => openUrl(AUTHOR_GITHUB)}
+          onClick={() => openUrl(`mailto:${AUTHOR_EMAIL}`)}
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
         >
-          <img src="/icons/github.svg" alt="GitHub" className="w-4 h-4 opacity-60" />
-          <span className="text-sm text-[var(--color-text-primary)]">程序员阿江-Relakkes</span>
-          <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">GitHub</span>
+          <span className="material-symbols-outlined text-[16px] opacity-60">mail</span>
+          <span className="text-sm text-[var(--color-text-primary)]">{AUTHOR_EMAIL}</span>
+          <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">Email</span>
         </button>
-      </div>
-
-      {/* Social Media */}
-      <div className="w-full mt-4">
-        <h3 className="text-xs font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider mb-3">{t('settings.about.socialMedia')}</h3>
-        <div className="flex flex-col gap-0.5">
-          {SOCIAL_LINKS.map((link) => (
-            <button
-              key={link.name}
-              onClick={() => openUrl(link.url)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-            >
-              <img src={link.icon} alt={link.name} className="w-4 h-4 opacity-60" />
-              <span className="text-sm text-[var(--color-text-primary)]">{link.label}</span>
-              <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">{link.name}</span>
-            </button>
-          ))}
-          <button
-            onClick={() => openUrl('mailto:relakkes@gmail.com')}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[16px] opacity-60">mail</span>
-            <span className="text-sm text-[var(--color-text-primary)]">relakkes@gmail.com</span>
-            <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">Email</span>
-          </button>
-        </div>
       </div>
     </div>
   )

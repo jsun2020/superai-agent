@@ -71,7 +71,7 @@ describe('ConversationService', () => {
   })
 
   test('strips inherited provider env when desktop provider config exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = path.join(tmpDir, 'superai')
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'providers.json'),
@@ -88,7 +88,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = path.join(tmpDir, 'superai')
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -113,7 +113,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does NOT inject CLAUDE_CODE_OAUTH_TOKEN when not official mode', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = path.join(tmpDir, 'superai')
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -166,7 +166,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = path.join(tmpDir, 'superai')
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -194,7 +194,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does not leak inherited CLAUDE_CODE_OAUTH_TOKEN when official token is unavailable', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = path.join(tmpDir, 'superai')
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),

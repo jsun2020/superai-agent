@@ -22,3 +22,18 @@ export type UserSettings = {
   skipWebFetchPreflight?: boolean
   [key: string]: unknown
 }
+
+export type ProxyConfig = {
+  enabled: boolean
+  host: string
+  port: number | null
+  username: string
+  password: string
+}
+
+export type ProxyTestResult = {
+  ok: boolean
+  status?: number
+  latencyMs?: number
+  error?: string
+}

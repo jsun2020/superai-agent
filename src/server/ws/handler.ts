@@ -1121,7 +1121,7 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
 
   let model: string | undefined
   if (activeId && activeProvider) {
-    // Provider is active — only consult provider-managed cc-haha settings.
+    // Provider is active — only consult provider-managed superai settings.
     // Global ~/.claude/settings.json model values must not bleed into provider mode.
     let baseModel =
       typeof modelSettings.model === 'string' && modelSettings.model.trim()

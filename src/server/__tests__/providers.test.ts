@@ -67,13 +67,13 @@ function sampleInput(overrides?: Partial<CreateProviderInput>): CreateProviderIn
 
 /** Read the settings.json written to the temp config dir */
 async function readSettings(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'superai', 'settings.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
 /** Read the providers.json written to the temp config dir */
 async function readProvidersConfig(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'providers.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'superai', 'providers.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -134,7 +134,7 @@ describe('ProviderService', () => {
       const svc = new ProviderService()
       await svc.addProvider(sampleInput())
 
-      await expect(fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')).rejects.toThrow()
+      await expect(fs.readFile(path.join(tmpDir, 'superai', 'settings.json'), 'utf-8')).rejects.toThrow()
     })
 
     test('adding additional providers should keep activeId unchanged', async () => {
@@ -319,9 +319,9 @@ describe('ProviderService', () => {
 
     test('should preserve existing settings.json fields on activation', async () => {
       // Pre-seed settings with an extra field
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(path.join(tmpDir, 'superai'), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'settings.json'),
+        path.join(tmpDir, 'superai', 'settings.json'),
         JSON.stringify({ theme: 'dark', env: { CUSTOM_VAR: 'keep-me' } }),
       )
 
@@ -405,9 +405,9 @@ describe('ProviderService', () => {
       }))
       await svc.activateProvider(yunwu.id)
       // Simulate stale env + model from a previously-active xiaomi provider.
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(path.join(tmpDir, 'superai'), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'settings.json'),
+        path.join(tmpDir, 'superai', 'settings.json'),
         JSON.stringify({
           model: 'mimo-v2.5-pro',
           env: {
@@ -452,7 +452,7 @@ describe('ProviderService', () => {
       await svc.activateProvider(provider.id)
       // Simulate corruption: providers.json still references an id that's no
       // longer in the providers list.
-      const idxPath = path.join(tmpDir, 'cc-haha', 'providers.json')
+      const idxPath = path.join(tmpDir, 'superai', 'providers.json')
       const idx = JSON.parse(await fs.readFile(idxPath, 'utf-8'))
       idx.providers = []
       await fs.writeFile(idxPath, JSON.stringify(idx))

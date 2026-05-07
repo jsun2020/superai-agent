@@ -264,7 +264,7 @@ async function runDesktopPermissionDialog(
 }
 
 /**
- * Load pre-authorized apps from ~/.claude/cc-haha/computer-use-config.json.
+ * Load pre-authorized apps from ~/.claude/superai/computer-use-config.json.
  * Called once when the binding is first created. Pre-authorized apps
  * are injected into appState so `getAllowedApps()` returns them
  * immediately — no runtime permission dialog needed.
@@ -280,7 +280,7 @@ async function loadPreAuthorizedApps(): Promise<void> {
   try {
     const configPath = join(
       process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-      'cc-haha',
+      'superai',
       'computer-use-config.json',
     )
     const raw = await readFile(configPath, 'utf8')

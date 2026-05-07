@@ -70,16 +70,16 @@ describe('provider presets API', () => {
     expect(minimax?.defaultModels.main).toBe('MiniMax-M2.7')
   })
 
-  test('GET and PUT /api/providers/settings read and write cc-haha settings.json', async () => {
+  test('GET and PUT /api/providers/settings read and write superai settings.json', async () => {
     const initial = {
       env: {
         ANTHROPIC_MODEL: 'glm-5.1',
       },
       model: 'glm-5.1',
     }
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'superai'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'settings.json'),
+      path.join(tmpDir, 'superai', 'settings.json'),
       JSON.stringify(initial, null, 2),
       'utf-8',
     )
@@ -99,7 +99,7 @@ describe('provider presets API', () => {
     const putRes = await handleProvidersApi(putReq.req, putReq.url, putReq.segments)
     expect(putRes.status).toBe(200)
 
-    const updatedRaw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
+    const updatedRaw = await fs.readFile(path.join(tmpDir, 'superai', 'settings.json'), 'utf-8')
     expect(JSON.parse(updatedRaw)).toEqual(updateBody)
   })
 })

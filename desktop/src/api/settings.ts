@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { PermissionMode, UserSettings } from '../types/settings'
+import type { PermissionMode, UserSettings, ProxyConfig, ProxyTestResult } from '../types/settings'
 
 export type CliLauncherStatus = {
   supported: boolean
@@ -34,5 +34,17 @@ export const settingsApi = {
 
   getCliLauncherStatus() {
     return api.get<CliLauncherStatus>('/api/settings/cli-launcher')
+  },
+
+  getProxy() {
+    return api.get<ProxyConfig>('/api/settings/proxy')
+  },
+
+  setProxy(config: ProxyConfig) {
+    return api.put<{ ok: true }>('/api/settings/proxy', config)
+  },
+
+  testProxy(config: ProxyConfig) {
+    return api.post<ProxyTestResult>('/api/settings/proxy/test', config)
   },
 }
