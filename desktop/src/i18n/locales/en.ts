@@ -544,6 +544,8 @@ export const en = {
   'chat.select': 'select',
   'chat.dismiss': 'dismiss',
   'chat.stopTitle': 'Stop generation (Cmd+.)',
+  'chat.openFolderInNewTab': 'Open project folder in new tab',
+  'chat.openFolderTitle': 'Choose project folder',
   'chat.rewindAction': 'Rewind to here',
   'chat.rewindModalTitle': 'Rewind Conversation',
   'chat.rewindConfirm': 'Rewind here',

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from '../../i18n'
+import { isTauriRuntime } from '../../lib/desktopRuntime'
 import { useChatStore } from '../../stores/chatStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -632,6 +633,31 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
             <div className="flex items-center gap-2">
               {!isMemberSession && (
                 <>
+                  <button
+                    onClick={async () => {
+                      if (!isTauriRuntime()) return
+                      try {
+                        const { open } = await import('@tauri-apps/plugin-dialog')
+                        const selected = await open({
+                          directory: true,
+                          multiple: false,
+                          title: t('chat.openFolderTitle'),
+                        })
+                        if (!selected || typeof selected !== 'string') return
+                        const newId = await useSessionStore.getState().createSession(selected)
+                        useTabStore.getState().openTab(newId, 'New Session')
+                        useChatStore.getState().connectToSession(newId)
+                      } catch (err) {
+                        console.error('[ChatInput] Open folder failed:', err)
+                      }
+                    }}
+                    aria-label={t('chat.openFolderInNewTab')}
+                    title={t('chat.openFolderInNewTab')}
+                    className="rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">create_new_folder</span>
+                  </button>
+
                   <div ref={plusMenuRef} className="relative">
                     <button
                       onClick={() => setPlusMenuOpen((value) => !value)}
