@@ -128,10 +128,18 @@ export class ProxySettingsService {
     if (!input.enabled || !input.host.trim()) {
       delete env.HTTPS_PROXY
       delete env.HTTP_PROXY
+      // Don't strip NO_PROXY — user may have set it independently.
     } else {
       const url = this.buildProxyUrl(input)
       env.HTTPS_PROXY = url
       env.HTTP_PROXY = url
+      // Always include loopback in NO_PROXY when a proxy is enabled.
+      // The desktop chat path spawns a CLI subprocess that connects back
+      // to the local server's WebSocket at ws://127.0.0.1:<port>. Without
+      // this, the WebSocket transport routes that loopback connection
+      // through the corporate proxy, the proxy refuses CONNECT to a
+      // private IP, and the chat hangs at "Cogitating..." forever.
+      env.NO_PROXY = mergeNoProxy(env.NO_PROXY)
     }
 
     settings.env = env
@@ -150,6 +158,7 @@ export class ProxySettingsService {
     if (env.HTTPS_PROXY) {
       process.env.HTTPS_PROXY = String(env.HTTPS_PROXY)
       process.env.HTTP_PROXY = String(env.HTTP_PROXY ?? env.HTTPS_PROXY)
+      if (env.NO_PROXY) process.env.NO_PROXY = String(env.NO_PROXY)
     } else {
       delete process.env.HTTPS_PROXY
       delete process.env.HTTP_PROXY
@@ -258,6 +267,25 @@ export class ProxySettingsService {
 }
 
 // ─── HTTP CONNECT response parsing ────────────────────────────────────────
+
+/**
+ * Ensure NO_PROXY contains loopback entries (localhost, 127.0.0.1, ::1)
+ * so the spawned CLI's WebSocket connection back to the local server
+ * bypasses the corporate proxy. Preserves any existing user entries.
+ */
+function mergeNoProxy(existing: unknown): string {
+  const required = ['localhost', '127.0.0.1', '::1']
+  const current =
+    typeof existing === 'string'
+      ? existing.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
+      : []
+  for (const entry of required) {
+    if (!current.some((e) => e.toLowerCase() === entry)) {
+      current.push(entry)
+    }
+  }
+  return current.join(',')
+}
 
 function parseConnectResponse(headBlock: string, latencyMs: number): ProxyTestResult {
   const lines = headBlock.split(/\r?\n/)

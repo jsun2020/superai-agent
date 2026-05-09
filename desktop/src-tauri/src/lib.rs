@@ -643,6 +643,24 @@ fn read_managed_proxy_env() -> HashMap<String, String> {
             }
         }
     }
+
+    // Defensive: when HTTPS_PROXY/HTTP_PROXY is set but NO_PROXY is not,
+    // inject loopback bypass. The spawned CLI subprocess opens a WebSocket
+    // back to the local server at ws://127.0.0.1:<port>. Without
+    // loopback in NO_PROXY, that connection is routed through the corporate
+    // proxy (which refuses CONNECT to private IPs), the SDK socket never
+    // opens, and the chat hangs at "Cogitating..." indefinitely. This
+    // covers existing installs whose settings.json was written before
+    // ProxySettingsService.setConfig() learned to add NO_PROXY itself.
+    let has_proxy = out.contains_key("HTTPS_PROXY")
+        || out.contains_key("HTTP_PROXY")
+        || out.contains_key("https_proxy")
+        || out.contains_key("http_proxy");
+    let has_no_proxy = out.contains_key("NO_PROXY") || out.contains_key("no_proxy");
+    if has_proxy && !has_no_proxy {
+        out.insert("NO_PROXY".to_string(), "localhost,127.0.0.1,::1".to_string());
+    }
+
     out
 }
 
