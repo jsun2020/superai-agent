@@ -3,6 +3,7 @@
 !.env.example
 node_modules
 .DS_Store
+prd.md
 
 # Computer Use runtime (auto-generated)
 .runtime/
