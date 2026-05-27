@@ -9,7 +9,12 @@
  */
 
 import { SettingsService } from '../services/settingsService.js'
-import { ProviderService } from '../services/providerService.js'
+import {
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
+  OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+  ProviderService,
+  isOpenAICodexOfficialProviderId,
+} from '../services/providerService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
@@ -39,6 +44,14 @@ const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const
 
 const DEFAULT_MODEL = 'claude-opus-4-7'
 const DEFAULT_EFFORT = 'medium'
+const OPENAI_CODEX_MODELS = [
+  {
+    id: OPENAI_CODEX_DEFAULT_MODEL_ID,
+    name: 'Codex 默认模型',
+    description: '使用本机 Codex CLI 配置',
+    context: '',
+  },
+] as const
 
 const settingsService = new SettingsService()
 const providerService = new ProviderService()
@@ -81,6 +94,13 @@ export async function handleModelsApi(
 
 async function handleModelsList(): Promise<Response> {
   const { providers, activeId } = await providerService.listProviders()
+  if (isOpenAICodexOfficialProviderId(activeId)) {
+    return Response.json({
+      models: OPENAI_CODEX_MODELS,
+      provider: { id: OPENAI_CODEX_OFFICIAL_PROVIDER_ID, name: 'OpenAI 官方' },
+    })
+  }
+
   const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
   if (activeProvider) {
     // Convert ModelMapping to model list for API compatibility
@@ -106,8 +126,9 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     await providerService.revalidateActiveSettings().catch(() => {})
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
+    const isOpenAICodexOfficialActive = isOpenAICodexOfficialProviderId(activeId)
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
-    const settings = activeProvider
+    const settings = activeProvider || isOpenAICodexOfficialActive
       ? await providerService.getManagedSettings()
       : await settingsService.getUserSettings()
     const explicitModel = (settings.model as string) || ''
@@ -117,7 +138,12 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     let currentModelId: string
     let currentModelName: string
 
-    if (activeProvider) {
+    if (isOpenAICodexOfficialActive) {
+      currentModelId = explicitModel || OPENAI_CODEX_DEFAULT_MODEL_ID
+      currentModelName = currentModelId === OPENAI_CODEX_DEFAULT_MODEL_ID
+        ? 'Codex 默认模型'
+        : currentModelId
+    } else if (activeProvider) {
       // Provider is active — only use the provider-managed superai settings.
       // This avoids leaking global ~/.claude/settings.json model choices into
       // the active provider flow.
@@ -161,7 +187,9 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     const lookupId = contextTier ? `${currentModelId}:${contextTier}` : currentModelId
 
     // Build available models for name lookup
-    const availableModels = activeProvider
+    const availableModels = isOpenAICodexOfficialActive
+      ? OPENAI_CODEX_MODELS
+      : activeProvider
       ? [
           { id: activeProvider.models.main, name: activeProvider.models.main, description: 'Main model', context: '' },
           ...(activeProvider.models.haiku && activeProvider.models.haiku !== activeProvider.models.main ? [{ id: activeProvider.models.haiku, name: activeProvider.models.haiku, description: 'Haiku model', context: '' }] : []),

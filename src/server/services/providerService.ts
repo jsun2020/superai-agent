@@ -37,6 +37,12 @@ const MANAGED_ENV_KEYS = [
 ] as const
 
 const DEFAULT_INDEX: ProvidersIndex = { activeId: null, providers: [] }
+export const OPENAI_CODEX_OFFICIAL_PROVIDER_ID = 'official-openai-codex'
+export const OPENAI_CODEX_DEFAULT_MODEL_ID = 'codex-default'
+
+export function isOpenAICodexOfficialProviderId(id: string | null | undefined): boolean {
+  return id === OPENAI_CODEX_OFFICIAL_PROVIDER_ID
+}
 
 export class ProviderService {
   private static serverPort = 3456
@@ -234,6 +240,14 @@ export class ProviderService {
     await this.resetCurrentModel(undefined)
   }
 
+  async activateOpenAICodexOfficial(): Promise<void> {
+    const index = await this.readIndex()
+    index.activeId = OPENAI_CODEX_OFFICIAL_PROVIDER_ID
+    await this.writeIndex(index)
+    await this.clearProviderFromSettings()
+    await this.resetCurrentModel(OPENAI_CODEX_DEFAULT_MODEL_ID)
+  }
+
   /** Clear or replace `settings.model` / `settings.modelContext` so a stale
    *  model id from a prior provider doesn't bleed into the new active one. */
   private async resetCurrentModel(nextModel: string | undefined): Promise<void> {
@@ -265,6 +279,15 @@ export class ProviderService {
       if (!hasManagedEnv && !hasManagedModel) return false
       await this.clearProviderFromSettings()
       await this.resetCurrentModel(undefined)
+      return true
+    }
+
+    if (isOpenAICodexOfficialProviderId(index.activeId)) {
+      const hasManagedEnv = MANAGED_ENV_KEYS.some((k) => k in env)
+      const explicitModel = typeof settings.model === 'string' ? settings.model : ''
+      if (!hasManagedEnv && explicitModel === OPENAI_CODEX_DEFAULT_MODEL_ID) return false
+      await this.clearProviderFromSettings()
+      await this.resetCurrentModel(OPENAI_CODEX_DEFAULT_MODEL_ID)
       return true
     }
 

@@ -74,6 +74,7 @@ type UIStore = {
   sidebarOpen: boolean
   activeView: ActiveView
   pendingSettingsTab: SettingsTab | null
+  pendingTerminalCommand: string | null
   activeModal: string | null
   toasts: Toast[]
 
@@ -83,6 +84,7 @@ type UIStore = {
   setSidebarOpen: (open: boolean) => void
   setActiveView: (view: ActiveView) => void
   setPendingSettingsTab: (tab: SettingsTab | null) => void
+  setPendingTerminalCommand: (command: string | null) => void
   openModal: (id: string) => void
   closeModal: () => void
   addToast: (toast: Omit<Toast, 'id'>) => void
@@ -96,6 +98,7 @@ export const useUIStore = create<UIStore>((set) => ({
   sidebarOpen: true,
   activeView: 'code',
   pendingSettingsTab: null,
+  pendingTerminalCommand: null,
   activeModal: null,
   toasts: [],
 
@@ -119,6 +122,7 @@ export const useUIStore = create<UIStore>((set) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setActiveView: (view) => set({ activeView: view }),
   setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
+  setPendingTerminalCommand: (command) => set({ pendingTerminalCommand: command }),
   openModal: (id) => set({ activeModal: id }),
   closeModal: () => set({ activeModal: null }),
 

@@ -82,12 +82,21 @@ export const en = {
   'settings.claudeOfficialLogin.errorPrefix': 'Error: ',
   'settings.claudeOfficialLogin.openBrowserFailed': 'Failed to open browser; please visit the authorization URL manually.',
 
+  // Settings > Codex Official Login
+  'settings.codexOfficialLogin.intro': 'Runs through the local Codex CLI using your OpenAI login. Click the button below to open the built-in terminal and start Codex sign-in.',
+  'settings.codexOfficialLogin.loginButton': 'Sign in to Codex',
+  'settings.codexOfficialLogin.errorPrefix': 'Error: ',
+  'settings.codexOfficialLogin.terminalUnavailable': 'Use the packaged desktop app to complete sign-in in the built-in terminal.',
+
   // Settings > Providers
   'settings.providers.title': 'Providers',
   'settings.providers.description': 'Manage API providers for model access.',
   'settings.providers.addProvider': 'Add Provider',
   'settings.providers.officialName': 'Claude Official',
   'settings.providers.officialDesc': 'Anthropic native — no API key required',
+  'settings.providers.openaiCodexOfficialName': 'OpenAI Official',
+  'settings.providers.openaiCodexOfficialDesc': 'Codex native — no API key required',
+  'settings.providers.openaiCodexOfficialIntro': 'Runs through the local Codex CLI using your OpenAI login. If you are not signed in yet, sign in to Codex first.',
   'settings.providers.connected': 'Connected ({latency}ms)',
   'settings.providers.failed': 'Failed: {error}',
   'settings.providers.connectivityOk': '① Connectivity ({latency}ms)',

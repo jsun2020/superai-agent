@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { OFFICIAL_DEFAULT_MODEL_ID, OFFICIAL_MODELS } from '../../constants/modelCatalog'
+import {
+  OFFICIAL_DEFAULT_MODEL_ID,
+  OFFICIAL_MODELS,
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
+  OPENAI_CODEX_MODELS,
+  OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+} from '../../constants/modelCatalog'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
@@ -69,10 +75,17 @@ function buildProviderChoices(
   activeId: string | null,
   availableModels: ModelInfo[],
   officialName: string,
+  openaiCodexOfficialName: string,
   labels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>,
 ): ProviderChoice[] {
   return [
     officialChoices(availableModels, activeId === null, officialName),
+    {
+      providerId: OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+      providerName: openaiCodexOfficialName,
+      isDefault: activeId === OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+      models: OPENAI_CODEX_MODELS,
+    },
     ...providers.map((provider) => ({
       providerId: provider.id,
       providerName: provider.name,
@@ -88,6 +101,13 @@ function resolveDefaultRuntimeSelection(
   providers: SavedProvider[],
   currentModelId: string | undefined,
 ): RuntimeSelection {
+  if (activeId === OPENAI_CODEX_OFFICIAL_PROVIDER_ID) {
+    return {
+      providerId: OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+      modelId: currentModelId ?? OPENAI_CODEX_DEFAULT_MODEL_ID,
+    }
+  }
+
   const inferredProviderId = activeId ?? (
     activeProviderName
       ? providers.find((provider) => provider.name === activeProviderName)?.id ?? null
@@ -206,6 +226,7 @@ export function ModelSelector({
       activeId,
       activeId === null ? availableModels : OFFICIAL_MODELS,
       t('settings.providers.officialName'),
+      t('settings.providers.openaiCodexOfficialName'),
       roleLabels,
     ),
     [activeId, availableModels, providers, roleLabels, t],

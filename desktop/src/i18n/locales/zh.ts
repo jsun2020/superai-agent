@@ -84,12 +84,21 @@ export const zh: Record<TranslationKey, string> = {
   'settings.claudeOfficialLogin.errorPrefix': '错误:',
   'settings.claudeOfficialLogin.openBrowserFailed': '无法打开浏览器,请手动访问授权链接。',
 
+  // Settings > Codex Official Login
+  'settings.codexOfficialLogin.intro': '使用本机 Codex CLI 的 OpenAI 登录态运行。点击下方按钮会打开内置终端并启动 Codex 登录流程。',
+  'settings.codexOfficialLogin.loginButton': '登录 Codex 账号',
+  'settings.codexOfficialLogin.errorPrefix': '错误:',
+  'settings.codexOfficialLogin.terminalUnavailable': '需要在打包后的桌面端里使用内置终端完成登录。',
+
   // Settings > Providers
   'settings.providers.title': '服务商',
   'settings.providers.description': '管理 API 服务商以访问模型。',
   'settings.providers.addProvider': '添加服务商',
   'settings.providers.officialName': 'Claude 官方',
   'settings.providers.officialDesc': 'Anthropic 原生接入 — 无需 API 密钥',
+  'settings.providers.openaiCodexOfficialName': 'OpenAI 官方',
+  'settings.providers.openaiCodexOfficialDesc': 'Codex 原生接入 — 无需 API 密钥',
+  'settings.providers.openaiCodexOfficialIntro': '使用本机 Codex CLI 的 OpenAI 登录态运行。若尚未登录，请先登录 Codex 账号。',
   'settings.providers.connected': '已连接 ({latency}ms)',
   'settings.providers.failed': '失败: {error}',
   'settings.providers.connectivityOk': '① 连通 ({latency}ms)',

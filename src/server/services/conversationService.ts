@@ -9,7 +9,11 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { ProviderService } from './providerService.js'
+import {
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
+  ProviderService,
+  isOpenAICodexOfficialProviderId,
+} from './providerService.js'
 import { sessionService } from './sessionService.js'
 import {
   buildClaudeCliArgs,
@@ -25,7 +29,9 @@ type AttachmentRef = {
 }
 
 type SessionProcess = {
-  proc: ReturnType<typeof Bun.spawn>
+  runtime: 'claude' | 'codex'
+  proc: ReturnType<typeof Bun.spawn> | null
+  activeCodexProc?: ReturnType<typeof Bun.spawn> | null
   outputCallbacks: Array<(msg: any) => void>
   workDir: string
   permissionMode: string
@@ -122,6 +128,11 @@ export class ConversationService {
       )
     }
 
+    if (isOpenAICodexOfficialProviderId(options?.providerId)) {
+      await this.startCodexSession(sessionId, workDir, launchInfo)
+      return
+    }
+
     const args = this.buildSessionCliArgs(
       sessionId,
       sdkUrl,
@@ -164,6 +175,7 @@ export class ConversationService {
     }
 
     const session: SessionProcess = {
+      runtime: 'claude',
       proc,
       outputCallbacks: [],
       workDir,
@@ -218,6 +230,50 @@ export class ConversationService {
     console.log(`[ConversationService] CLI started successfully for ${sessionId}`)
   }
 
+  private async startCodexSession(
+    sessionId: string,
+    workDir: string,
+    launchInfo: { customTitle?: string | null; transcriptMessageCount?: number } | null,
+  ): Promise<void> {
+    const codexCommand = this.resolveCodexCommand()
+    if (!codexCommand) {
+      throw new ConversationStartupError(
+        'Codex CLI not found. Install it with `npm install -g @openai/codex` or set CODEX_CLI_PATH.',
+        'CLI_SPAWN_FAILED',
+      )
+    }
+
+    const session: SessionProcess = {
+      runtime: 'codex',
+      proc: null,
+      activeCodexProc: null,
+      outputCallbacks: [],
+      workDir,
+      permissionMode: 'default',
+      sdkToken: '',
+      sdkSocket: null,
+      pendingOutbound: [],
+      stderrLines: [],
+      sdkMessages: [],
+      pendingPermissionRequests: new Map(),
+    }
+    this.sessions.set(sessionId, session)
+
+    if (!launchInfo) {
+      await sessionService.appendSessionMetadata(sessionId, {
+        workDir,
+        customTitle: null,
+      })
+    } else if (launchInfo.transcriptMessageCount === 0) {
+      await sessionService.appendSessionMetadata(sessionId, {
+        workDir,
+        customTitle: launchInfo.customTitle ?? null,
+      })
+    }
+
+    console.log(`[ConversationService] Codex session ready for ${sessionId}`)
+  }
+
   onOutput(sessionId: string, callback: (msg: any) => void): void {
     const session = this.sessions.get(sessionId)
     if (session) {
@@ -241,6 +297,12 @@ export class ConversationService {
     content: string,
     attachments?: AttachmentRef[],
   ): boolean {
+    const session = this.sessions.get(sessionId)
+    if (session?.runtime === 'codex') {
+      void this.runCodexTurn(sessionId, content, attachments)
+      return true
+    }
+
     return this.sendSdkMessage(sessionId, {
       type: 'user',
       message: {
@@ -404,13 +466,260 @@ export class ConversationService {
   stopSession(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (session) {
-      session.proc.kill()
+      session.activeCodexProc?.kill()
+      session.proc?.kill()
       this.sessions.delete(sessionId)
     }
   }
 
   getActiveSessions(): string[] {
     return Array.from(this.sessions.keys())
+  }
+
+  private async runCodexTurn(
+    sessionId: string,
+    content: string,
+    attachments?: AttachmentRef[],
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session || session.runtime !== 'codex') return
+    if (session.activeCodexProc) {
+      this.emitCliMessage(sessionId, {
+        type: 'result',
+        is_error: true,
+        result: 'Codex is still processing the previous message.',
+      })
+      return
+    }
+
+    const codexCommand = this.resolveCodexCommand()
+    if (!codexCommand) {
+      this.emitCliMessage(sessionId, {
+        type: 'result',
+        is_error: true,
+        result: 'Codex CLI not found. Install it with `npm install -g @openai/codex` or set CODEX_CLI_PATH.',
+      })
+      return
+    }
+
+    const outputFile = path.join(
+      os.tmpdir(),
+      `superai-codex-${sessionId}-${Date.now()}.txt`,
+    )
+    const prompt = this.buildCodexPrompt(content, attachments)
+    const args = this.buildCodexExecArgs(codexCommand, outputFile, prompt, session)
+
+    this.emitCliMessage(sessionId, {
+      type: 'system',
+      subtype: 'init',
+      model: 'Codex',
+      slash_commands: [],
+    })
+
+    let proc: ReturnType<typeof Bun.spawn>
+    try {
+      proc = Bun.spawn(args, {
+        cwd: session.workDir,
+        env: {
+          ...process.env,
+          PWD: session.workDir,
+        },
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+    } catch (err) {
+      this.emitCliMessage(sessionId, {
+        type: 'result',
+        is_error: true,
+        result: `Failed to spawn Codex CLI: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+
+    session.activeCodexProc = proc
+    const stderrPromise = this.collectTextStream(proc.stderr)
+    const stdoutPromise = this.consumeCodexJsonStream(sessionId, proc.stdout)
+    const exitCode = await proc.exited
+    const [stderr] = await Promise.all([stderrPromise, stdoutPromise.catch(() => '')])
+
+    if (this.sessions.get(sessionId)?.activeCodexProc === proc) {
+      const active = this.sessions.get(sessionId)
+      if (active) active.activeCodexProc = null
+    }
+
+    const finalText = fs.existsSync(outputFile)
+      ? fs.readFileSync(outputFile, 'utf-8').trim()
+      : ''
+    fs.unlink(outputFile, () => {})
+
+    if (exitCode !== 0) {
+      this.emitCliMessage(sessionId, {
+        type: 'result',
+        is_error: true,
+        result: stderr.trim() || `Codex exited with code ${exitCode}`,
+      })
+      return
+    }
+
+    if (finalText) {
+      this.emitCliMessage(sessionId, {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: finalText }] },
+      })
+    }
+    this.emitCliMessage(sessionId, {
+      type: 'result',
+      is_error: false,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    })
+  }
+
+  private buildCodexPrompt(content: string, attachments?: AttachmentRef[]): string {
+    if (!attachments?.length) return content
+    const attachmentText = attachments
+      .map((attachment) => {
+        if (attachment.path) return `- ${attachment.type}: ${attachment.path}`
+        if (attachment.name) return `- ${attachment.type}: ${attachment.name}`
+        return `- ${attachment.type}`
+      })
+      .join('\n')
+    return `${content}\n\nAttachments:\n${attachmentText}`
+  }
+
+  private buildCodexExecArgs(
+    codexCommand: string,
+    outputFile: string,
+    prompt: string,
+    session: SessionProcess,
+  ): string[] {
+    const args = [codexCommand]
+    const model = this.resolveCodexModel()
+    const permissionMode = session.permissionMode || 'default'
+
+    if (permissionMode === 'bypassPermissions') {
+      args.push('--dangerously-bypass-approvals-and-sandbox')
+    } else {
+      args.push('-a', 'never')
+      args.push('-s', permissionMode === 'plan' ? 'read-only' : 'workspace-write')
+    }
+
+    if (model && model !== OPENAI_CODEX_DEFAULT_MODEL_ID) {
+      args.push('-m', model)
+    }
+
+    args.push('exec', '--json', '--skip-git-repo-check', '-o', outputFile, prompt)
+    return args
+  }
+
+  private resolveCodexModel(): string {
+    const configDir =
+      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    const settingsPath = path.join(configDir, 'superai', 'settings.json')
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf-8')
+      const parsed = JSON.parse(raw) as { model?: string }
+      return parsed.model || OPENAI_CODEX_DEFAULT_MODEL_ID
+    } catch {
+      return OPENAI_CODEX_DEFAULT_MODEL_ID
+    }
+  }
+
+  private resolveCodexCommand(): string | null {
+    const candidates = [
+      process.env.CODEX_CLI_PATH,
+      'codex',
+      path.join(os.homedir(), '.npm-global', 'bin', 'codex'),
+      path.join(os.homedir(), '.bun', 'bin', 'codex'),
+      '/opt/homebrew/bin/codex',
+      '/usr/local/bin/codex',
+    ].filter((candidate): candidate is string => Boolean(candidate))
+
+    for (const candidate of candidates) {
+      if (candidate === 'codex') {
+        const pathCommand = this.findExecutableOnPath('codex')
+        if (pathCommand) return pathCommand
+        continue
+      }
+      if (fs.existsSync(candidate)) return candidate
+    }
+    return null
+  }
+
+  private findExecutableOnPath(command: string): string | null {
+    const pathValue = process.env.PATH || ''
+    const delimiter = process.platform === 'win32' ? ';' : ':'
+    const names = process.platform === 'win32'
+      ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
+      : [command]
+
+    for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+      for (const name of names) {
+        const candidate = path.join(dir, name)
+        if (fs.existsSync(candidate)) return candidate
+      }
+    }
+    return null
+  }
+
+  private async consumeCodexJsonStream(
+    sessionId: string,
+    stream: ReadableStream | null,
+  ): Promise<void> {
+    if (!stream) return
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          this.handleCodexJsonLine(sessionId, line)
+        }
+      }
+      if (buffer.trim()) this.handleCodexJsonLine(sessionId, buffer)
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  private handleCodexJsonLine(sessionId: string, line: string): void {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    try {
+      const event = JSON.parse(trimmed) as Record<string, unknown>
+      const type = typeof event.type === 'string' ? event.type : ''
+      if (type === 'turn.started') {
+        this.emitCliMessage(sessionId, {
+          type: 'system',
+          subtype: 'task_progress',
+          message: 'Codex is working...',
+        })
+      }
+    } catch {
+      // Ignore non-JSON progress output.
+    }
+  }
+
+  private async collectTextStream(stream: ReadableStream | null): Promise<string> {
+    if (!stream) return ''
+    return new Response(stream).text()
+  }
+
+  private emitCliMessage(sessionId: string, message: Record<string, unknown>): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.sdkMessages.push(message)
+    if (session.sdkMessages.length > 40) {
+      session.sdkMessages.splice(0, 20)
+    }
+    for (const callback of session.outputCallbacks) {
+      callback(message)
+    }
   }
 
   private async readErrorStream(

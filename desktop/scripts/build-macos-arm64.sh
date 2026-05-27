@@ -223,14 +223,18 @@ if [[ -n "${LATEST_DMG}" ]]; then
 fi
 
 if [[ -n "${LATEST_APP}" ]]; then
-  # 注意: 不要再对 .app 重签名。曾经脚本在这里跑过
+  cp -R "${LATEST_APP}" "${CANONICAL_OUTPUT_DIR}/"
+  # 注意: 不要使用 --deep 重签 .app。曾经脚本在这里跑过
   # `codesign --force --deep --sign - --identifier <bundle-id>` 来统一
   # sidecar 和外层的 signing identifier,但这会改变 sidecar binary 的
   # code signature hash —— macOS Keychain ACL 按 hash 识别 caller,
   # 重签完再访问时会被 ACL 当作"陌生 binary"静默拒绝,导致 CLI 读不到
   # OAuth token,最终请求打到 Anthropic 返回 403 "Request not allowed"。
-  # Tauri 的 --no-sign 其实已经做了 ad-hoc 签名,直接用即可。
-  cp -R "${LATEST_APP}" "${CANONICAL_OUTPUT_DIR}/"
+  #
+  # 只对外层 app bundle 做非 deep ad-hoc 签名,用于生成有效的 bundle
+  # 资源封装,同时保留 sidecar 现有签名和 hash。
+  xattr -dr com.apple.quarantine "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" 2>/dev/null || true
+  codesign --force --sign - --timestamp=none "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}"
   rm -f "${CANONICAL_OUTPUT_DIR}/"*.dmg
   build_canonical_dmg \
     "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" \

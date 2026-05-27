@@ -27,8 +27,10 @@ import { McpSettings } from './McpSettings'
 import { TerminalSettings } from './TerminalSettings'
 import { useUIStore, type SettingsTab } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
+import { CodexOfficialLogin } from '../components/settings/CodexOfficialLogin'
 import { useUpdateStore } from '../stores/updateStore'
 import { formatBytes } from '../lib/formatBytes'
+import { OPENAI_CODEX_OFFICIAL_PROVIDER_ID } from '../constants/modelCatalog'
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
@@ -112,6 +114,7 @@ function ProviderSettings() {
     deleteProvider,
     activateProvider,
     activateOfficial,
+    activateOpenAICodexOfficial,
     testProvider,
   } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
@@ -170,7 +173,13 @@ function ProviderSettings() {
     await fetchSettings()
   }
 
+  const handleActivateOpenAICodexOfficial = async () => {
+    await activateOpenAICodexOfficial()
+    await fetchSettings()
+  }
+
   const isOfficialActive = activeId === null
+  const isOpenAICodexOfficialActive = activeId === OPENAI_CODEX_OFFICIAL_PROVIDER_ID
 
   return (
     <div className="max-w-2xl">
@@ -185,7 +194,7 @@ function ProviderSettings() {
         </Button>
       </div>
 
-      {/* Official provider — always visible at top */}
+      {/* Official providers — always visible at top */}
       <div
         className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
           isOfficialActive
@@ -212,6 +221,36 @@ function ProviderSettings() {
         {isOfficialActive && (
           <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border-separator)]">
             <ClaudeOfficialLogin />
+          </div>
+        )}
+      </div>
+
+      <div
+        className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
+          isOpenAICodexOfficialActive
+            ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
+            : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] cursor-pointer'
+        }`}
+      >
+        <div
+          className="flex items-center gap-4 px-4 py-3.5"
+          onClick={() => !isOpenAICodexOfficialActive && handleActivateOpenAICodexOfficial()}
+        >
+          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOpenAICodexOfficialActive ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.openaiCodexOfficialName')}</span>
+              {isOpenAICodexOfficialActive && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
+              )}
+            </div>
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.openaiCodexOfficialDesc')}</div>
+          </div>
+        </div>
+
+        {isOpenAICodexOfficialActive && (
+          <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border-separator)]">
+            <CodexOfficialLogin />
           </div>
         )}
       </div>

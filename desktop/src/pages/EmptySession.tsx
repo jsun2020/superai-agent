@@ -8,7 +8,11 @@ import { useSessionRuntimeStore, DRAFT_RUNTIME_SELECTION_KEY } from '../stores/s
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../stores/tabStore'
-import { OFFICIAL_DEFAULT_MODEL_ID } from '../constants/modelCatalog'
+import {
+  OFFICIAL_DEFAULT_MODEL_ID,
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
+  OPENAI_CODEX_OFFICIAL_PROVIDER_ID,
+} from '../constants/modelCatalog'
 import { DirectoryPicker } from '../components/shared/DirectoryPicker'
 import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
 import { ModelSelector } from '../components/controls/ModelSelector'
@@ -229,7 +233,11 @@ export function EmptySession() {
       const inferredProvider = inferredProviderId
         ? providerState.providers.find((p) => p.id === inferredProviderId) ?? null
         : null
-      let inferredModelId = settings.currentModel?.id ?? OFFICIAL_DEFAULT_MODEL_ID
+      let inferredModelId = settings.currentModel?.id ?? (
+        inferredProviderId === OPENAI_CODEX_OFFICIAL_PROVIDER_ID
+          ? OPENAI_CODEX_DEFAULT_MODEL_ID
+          : OFFICIAL_DEFAULT_MODEL_ID
+      )
       if (inferredProvider) {
         const providerModelIds = new Set(
           [

@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import { providersApi } from '../api/providers'
 import { useSettingsStore } from './settingsStore'
-import { OFFICIAL_DEFAULT_MODEL_ID } from '../constants/modelCatalog'
+import { OFFICIAL_DEFAULT_MODEL_ID, OPENAI_CODEX_DEFAULT_MODEL_ID } from '../constants/modelCatalog'
 import type {
   SavedProvider,
   CreateProviderInput,
@@ -28,6 +28,7 @@ type ProviderStore = {
   deleteProvider: (id: string) => Promise<void>
   activateProvider: (id: string) => Promise<void>
   activateOfficial: () => Promise<void>
+  activateOpenAICodexOfficial: () => Promise<void>
   testProvider: (id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) => Promise<ProviderTestResult>
   testConfig: (input: TestProviderConfigInput) => Promise<ProviderTestResult>
 }
@@ -96,6 +97,14 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
     // 切回官方默认时同样重置 currentModel，避免残留第三方 model id。
     const settings = useSettingsStore.getState()
     await settings.setModel(OFFICIAL_DEFAULT_MODEL_ID)
+    await settings.fetchAll()
+  },
+
+  activateOpenAICodexOfficial: async () => {
+    await providersApi.activateOpenAICodexOfficial()
+    await get().fetchProviders()
+    const settings = useSettingsStore.getState()
+    await settings.setModel(OPENAI_CODEX_DEFAULT_MODEL_ID)
     await settings.fetchAll()
   },
 

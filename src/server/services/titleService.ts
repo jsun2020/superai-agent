@@ -6,7 +6,7 @@
  * 2. generateTitle() — async Haiku call for a polished 3-7 word title
  */
 
-import { ProviderService } from './providerService.js'
+import { ProviderService, isOpenAICodexOfficialProviderId } from './providerService.js'
 import { sessionService } from './sessionService.js'
 
 const TITLE_MAX_LEN = 50
@@ -53,6 +53,7 @@ export async function generateTitle(
   try {
     const providerService = new ProviderService()
     if (providerId === null) return null
+    if (isOpenAICodexOfficialProviderId(providerId)) return null
 
     let resolvedProvider = providerId
       ? await providerService.getProvider(providerId)
@@ -60,6 +61,7 @@ export async function generateTitle(
 
     if (!resolvedProvider) {
       const { activeId, providers } = await providerService.listProviders()
+      if (isOpenAICodexOfficialProviderId(activeId)) return null
       resolvedProvider = activeId
         ? providers.find((provider) => provider.id === activeId) ?? null
         : null

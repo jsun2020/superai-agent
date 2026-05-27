@@ -11,6 +11,7 @@
  * DELETE /api/providers/:id          — delete a provider
  * POST   /api/providers/:id/activate — activate a saved provider
  * POST   /api/providers/official     — activate official (clear env)
+ * POST   /api/providers/openai-codex-official — activate OpenAI Codex official
  * POST   /api/providers/:id/test     — test a saved provider
  * POST   /api/providers/test         — test unsaved config
  */
@@ -80,6 +81,12 @@ export async function handleProvidersApi(
     // POST /api/providers/official
     if (id === 'official' && req.method === 'POST') {
       await providerService.activateOfficial()
+      return Response.json({ ok: true })
+    }
+
+    // POST /api/providers/openai-codex-official
+    if (id === 'openai-codex-official' && req.method === 'POST') {
+      await providerService.activateOpenAICodexOfficial()
       return Response.json({ ok: true })
     }
 

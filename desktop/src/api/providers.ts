@@ -61,6 +61,10 @@ export const providersApi = {
     return api.post<{ ok: true }>('/api/providers/official')
   },
 
+  activateOpenAICodexOfficial() {
+    return api.post<{ ok: true }>('/api/providers/openai-codex-official')
+  },
+
   test(id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) {
     return api.post<TestResultResponse>(`/api/providers/${id}/test`, overrides)
   },

@@ -16,7 +16,11 @@ import {
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 import { sessionService } from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
-import { ProviderService } from '../services/providerService.js'
+import {
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
+  ProviderService,
+  isOpenAICodexOfficialProviderId,
+} from '../services/providerService.js'
 import { deriveTitle, generateTitle, saveAiTitle } from '../services/titleService.js'
 
 const settingsService = new SettingsService()
@@ -1104,6 +1108,7 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
 
   // Check if a custom provider is active
   const { providers, activeId } = await providerService.listProviders()
+  const isOpenAICodexOfficialActive = isOpenAICodexOfficialProviderId(activeId)
   const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
   const userSettings = await settingsService.getUserSettings()
   const providerSettings = activeId
@@ -1120,7 +1125,12 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
       : undefined
 
   let model: string | undefined
-  if (activeId && activeProvider) {
+  if (isOpenAICodexOfficialActive) {
+    model =
+      typeof modelSettings.model === 'string' && modelSettings.model.trim()
+        ? modelSettings.model
+        : OPENAI_CODEX_DEFAULT_MODEL_ID
+  } else if (activeId && activeProvider) {
     // Provider is active — only consult provider-managed superai settings.
     // Global ~/.claude/settings.json model values must not bleed into provider mode.
     let baseModel =

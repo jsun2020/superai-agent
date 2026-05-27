@@ -3,6 +3,7 @@ import type { Terminal as XTermTerminal } from '@xterm/xterm'
 import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit'
 import { useTranslation, type TranslationKey } from '../i18n'
 import { terminalApi } from '../api/terminal'
+import { useUIStore } from '../stores/uiStore'
 
 type TerminalStatus = 'idle' | 'starting' | 'running' | 'exited' | 'error' | 'unavailable'
 
@@ -25,6 +26,8 @@ export function TerminalSettings() {
   const [status, setStatus] = useState<TerminalStatus>(() => terminalApi.isAvailable() ? 'idle' : 'unavailable')
   const [error, setError] = useState<string | null>(null)
   const [shellInfo, setShellInfo] = useState<{ shell: string; cwd: string } | null>(null)
+  const pendingTerminalCommand = useUIStore((s) => s.pendingTerminalCommand)
+  const setPendingTerminalCommand = useUIStore((s) => s.setPendingTerminalCommand)
 
   const resizeSession = useCallback(() => {
     const terminal = terminalRef.current
@@ -135,6 +138,17 @@ export function TerminalSettings() {
       setShellInfo({ shell: result.shell, cwd: result.cwd })
       setStatus('running')
       resizeSession()
+
+      const command = useUIStore.getState().pendingTerminalCommand
+      if (command) {
+        useUIStore.getState().setPendingTerminalCommand(null)
+        setTimeout(() => {
+          void terminalApi.write(result.session_id, command).catch((err) => {
+            setError(err instanceof Error ? err.message : String(err))
+            setStatus('error')
+          })
+        }, 250)
+      }
     } catch (err) {
       outputUnlisten()
       exitUnlisten()
@@ -145,6 +159,18 @@ export function TerminalSettings() {
       setStatus('error')
     }
   }, [resizeSession])
+
+  useEffect(() => {
+    const sessionId = sessionIdRef.current
+    if (!pendingTerminalCommand || !sessionId || status !== 'running') return
+
+    void terminalApi.write(sessionId, pendingTerminalCommand)
+      .then(() => setPendingTerminalCommand(null))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : String(err))
+        setStatus('error')
+      })
+  }, [pendingTerminalCommand, setPendingTerminalCommand, status])
 
   useEffect(() => {
     if (!terminalApi.isAvailable()) return
