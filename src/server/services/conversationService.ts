@@ -57,6 +57,49 @@ type SessionStartOptions = {
   providerId?: string | null
 }
 
+const DEFAULT_CODEX_EXEC_TIMEOUT_MS = 5 * 60_000
+
+export function resolveCodexExecTimeoutMs(raw = process.env.CODEX_EXEC_TIMEOUT_MS): number {
+  if (!raw) return DEFAULT_CODEX_EXEC_TIMEOUT_MS
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CODEX_EXEC_TIMEOUT_MS
+}
+
+// On Windows, Bun.spawn().kill() does NOT propagate to children. Codex CLI
+// spawns codex-windows-sandbox-setup.exe which can take minutes of CPU; a
+// plain kill leaves orphans that block subsequent runs. taskkill /T walks the
+// process tree.
+export function shouldUseTaskkill(
+  platform: NodeJS.Platform,
+  pid: number | undefined,
+): boolean {
+  return platform === 'win32' && typeof pid === 'number' && pid > 0
+}
+
+function killCodexProcessTree(proc: {
+  pid?: number
+  kill: () => void
+}): void {
+  if (shouldUseTaskkill(process.platform, proc.pid)) {
+    try {
+      Bun.spawnSync(['taskkill', '/F', '/T', '/PID', String(proc.pid)], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      return
+    } catch {
+      // fall through to proc.kill()
+    }
+  }
+  try {
+    proc.kill()
+  } catch {
+    /* already dead */
+  }
+}
+
 export class ConversationStartupError extends Error {
   constructor(
     message: string,
@@ -466,7 +509,7 @@ export class ConversationService {
   stopSession(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (session) {
-      session.activeCodexProc?.kill()
+      if (session.activeCodexProc) killCodexProcessTree(session.activeCodexProc)
       session.proc?.kill()
       this.sessions.delete(sessionId)
     }
@@ -540,7 +583,33 @@ export class ConversationService {
     session.activeCodexProc = proc
     const stderrPromise = this.collectTextStream(proc.stderr)
     const stdoutPromise = this.consumeCodexJsonStream(sessionId, proc.stdout)
-    const exitCode = await proc.exited
+    const timeoutMs = this.getCodexExecTimeoutMs()
+    const timeoutResult = Symbol('codex-timeout')
+    const exitOrTimeout = await Promise.race([
+      proc.exited,
+      new Promise<typeof timeoutResult>((resolve) =>
+        setTimeout(() => resolve(timeoutResult), timeoutMs),
+      ),
+    ])
+
+    if (exitOrTimeout === timeoutResult) {
+      killCodexProcessTree(proc)
+      if (this.sessions.get(sessionId)?.activeCodexProc === proc) {
+        const active = this.sessions.get(sessionId)
+        if (active) active.activeCodexProc = null
+      }
+      this.emitCliMessage(sessionId, {
+        type: 'result',
+        is_error: true,
+        result:
+          `Codex did not finish within ${Math.round(timeoutMs / 1000)} seconds. ` +
+          'This usually means the local Codex CLI is stuck waiting on ChatGPT auth, network, or model availability. ' +
+          'Open Settings > OpenAI Official and sign in again, then retry.',
+      })
+      return
+    }
+
+    const exitCode = exitOrTimeout
     const [stderr] = await Promise.all([stderrPromise, stdoutPromise.catch(() => '')])
 
     if (this.sessions.get(sessionId)?.activeCodexProc === proc) {
@@ -708,6 +777,10 @@ export class ConversationService {
   private async collectTextStream(stream: ReadableStream | null): Promise<string> {
     if (!stream) return ''
     return new Response(stream).text()
+  }
+
+  private getCodexExecTimeoutMs(): number {
+    return resolveCodexExecTimeoutMs()
   }
 
   private emitCliMessage(sessionId: string, message: Record<string, unknown>): void {

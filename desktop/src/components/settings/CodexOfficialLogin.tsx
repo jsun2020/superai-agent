@@ -14,7 +14,7 @@ export function CodexOfficialLogin() {
     }
 
     setError(null)
-    useUIStore.getState().setPendingTerminalCommand('codex login\n')
+    useUIStore.getState().setPendingTerminalCommand('codex logout\ncodex login\n')
     useUIStore.getState().setPendingSettingsTab('terminal')
   }
 
