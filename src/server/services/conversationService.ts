@@ -650,7 +650,7 @@ export class ConversationService {
     const pathValue = process.env.PATH || ''
     const delimiter = process.platform === 'win32' ? ';' : ':'
     const names = process.platform === 'win32'
-      ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
+      ? [`${command}.exe`, `${command}.cmd`, `${command}.bat`, command]
       : [command]
 
     for (const dir of pathValue.split(delimiter).filter(Boolean)) {
