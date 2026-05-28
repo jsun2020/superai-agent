@@ -567,7 +567,11 @@ export class ConversationService {
           ...process.env,
           PWD: session.workDir,
         },
-        stdin: 'ignore',
+        // 'pipe' + immediate end() guarantees stdin is closed even when the
+        // child is launched through a Windows .cmd shim (codex.cmd). With
+        // 'ignore' the shim inherits the parent's stdin handle and Codex
+        // blocks forever at "Reading additional input from stdin...".
+        stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
       })
@@ -578,6 +582,12 @@ export class ConversationService {
         result: `Failed to spawn Codex CLI: ${err instanceof Error ? err.message : String(err)}`,
       })
       return
+    }
+
+    try {
+      proc.stdin?.end?.()
+    } catch {
+      /* stdin already closed */
     }
 
     session.activeCodexProc = proc
