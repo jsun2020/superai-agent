@@ -36,6 +36,7 @@ SuperAI Agent 是一个本地可运行的 AI 编码代理：完整的终端 TUI�
 - **Channel 系统**（通过 Telegram/飞书/Discord 等 IM 远程控制 Agent）— [架构解析](docs/channel/01-channel-system.md)
 - **Computer Use 桌面控制** — [功能指南](docs/features/computer-use.md) | [架构解析](docs/features/computer-use-architecture.md)
 - **桌面端**（Tauri 2 + React 图形化客户端，多标签多会话）— [文档](docs/desktop/)
+- **OpenAI Codex 官方提供商**（通过本机 `codex` CLI 复用 ChatGPT 登录态，无需 API Key）— [接入指南](docs/guide/codex.md)
 - 降级 Recovery CLI 模式（`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/superai-agent`）
 
 ---
@@ -165,6 +166,7 @@ http://127.0.0.1:2024
 |------|------|
 | [环境变量](docs/guide/env-vars.md) | 完整环境变量参考和配置方式 |
 | [第三方模型](docs/guide/third-party-models.md) | 接入 OpenAI / DeepSeek / Ollama 等非 Anthropic 模型 |
+| [Codex 接入](docs/guide/codex.md) | 通过本机 `codex` CLI 复用 ChatGPT 登录态作为提供商 |
 | [记忆系统](docs/memory/01-usage-guide.md) | 跨会话持久化记忆的使用与实现 |
 | [多 Agent 系统](docs/agent/01-usage-guide.md) | 多代理编排、并行任务执行与 Teams 协作 |
 | [Skills 系统](docs/skills/01-usage-guide.md) | 可扩展能力插件、自定义工作流与条件激活 |

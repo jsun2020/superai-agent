@@ -48,4 +48,8 @@ features:
     title: 桌面端
     details: 基于 Tauri 2 + React 的图形化客户端，多标签、多会话、IM 适配器接入，支持 macOS 和 Windows
     link: /desktop/
+  - icon: "\U0001F511"
+    title: OpenAI Codex 官方提供商
+    details: 通过本机 codex CLI 复用 ChatGPT 登录态，无需 API Key
+    link: /guide/codex
 ---

@@ -36,6 +36,7 @@ SuperAI Agent is a locally runnable AI coding agent: a full terminal TUI plus a 
 - **Channel System** (remote Agent control via Telegram/Feishu/Discord IM platforms) — [Architecture](docs/en/channel/01-channel-system.md)
 - **Computer Use desktop control** — [Guide](docs/en/features/computer-use.md) | [Architecture](docs/en/features/computer-use-architecture.md)
 - **Desktop App** (Tauri 2 + React GUI client, multi-tab multi-session) — [Docs](docs/desktop/)
+- **OpenAI Codex Official Provider** (reuses your ChatGPT login via the local `codex` CLI — no API key required) — [Setup Guide](docs/en/guide/codex.md)
 - Fallback Recovery CLI mode (`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/superai-agent`)
 
 ---
@@ -165,6 +166,7 @@ http://127.0.0.1:2024
 |------|------|
 | [Environment Variables](docs/en/guide/env-vars.md) | Full env var reference and configuration methods |
 | [Third-Party Models](docs/en/guide/third-party-models.md) | Using OpenAI / DeepSeek / Ollama and other non-Anthropic models |
+| [Codex Integration](docs/en/guide/codex.md) | Use the local `codex` CLI as a provider via your ChatGPT login |
 | [Memory System](docs/memory/01-usage-guide.md) | Cross-session persistent memory usage and implementation |
 | [Multi-Agent System](docs/agent/01-usage-guide.md) | Agent orchestration, parallel tasks and Teams collaboration |
 | [Skills System](docs/skills/01-usage-guide.md) | Extensible capability plugins, custom workflows and conditional activation |
