@@ -243,6 +243,31 @@ export function buildComputerUseTools(
       },
     },
 
+    // Windows-only fast localization path: the UIA accessibility tree gives
+    // exact element coordinates without a screenshot -> vision round trip.
+    ...(caps.platform === "win32"
+      ? [
+          {
+            name: "read_ui_elements",
+            description:
+              "Fast element localization (much faster than screenshot+vision): list the interactive UI elements of the currently FOCUSED window — buttons, links, text fields, checkboxes, menu/list/tab/tree items — read from the Windows accessibility tree. No screenshot required. " +
+              "Returns each element's role, name, and center coordinate in the SAME coordinate space as the click tools, so you can pass a returned (x, y) directly to left_click. Coordinates are exact, not estimated. " +
+              "Prefer this to locate a control by its label; fall back to screenshot/zoom when you need visual state (images, colors, layout) or when the app exposes no accessibility info (elements list empty or missing names). Read-only.",
+            inputSchema: {
+              type: "object" as const,
+              properties: {
+                filter: {
+                  type: "string",
+                  description:
+                    "Optional case-insensitive substring to match against element names (e.g. \"save\" to find Save buttons). Omit to list all interactive elements.",
+                },
+              },
+              required: [],
+            },
+          },
+        ]
+      : []),
+
     {
       name: "left_click",
       description: `Left-click at the given coordinates. ${FRONTMOST_GATE_DESC}`,

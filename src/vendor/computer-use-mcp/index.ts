@@ -6,6 +6,8 @@ export type {
   ResolvePrepareCaptureResult,
   RunningApp,
   ScreenshotResult,
+  UiElement,
+  UiElementsResult,
 } from "./executor.js";
 
 export type {

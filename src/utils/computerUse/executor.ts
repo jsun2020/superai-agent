@@ -14,6 +14,7 @@ import type {
   ResolvePrepareCaptureResult,
   RunningApp,
   ScreenshotResult,
+  UiElementsResult,
 } from '../../vendor/computer-use-mcp/index.js'
 import { API_RESIZE_PARAMS, targetImageSize } from '../../vendor/computer-use-mcp/index.js'
 import { sleep } from '../sleep.js'
@@ -221,6 +222,22 @@ export function createCliExecutor(_opts: {
     async getCursorPosition(): Promise<{ x: number; y: number }> {
       return callPythonHelper('cursor_position', {})
     },
+
+    // Windows-only: UI Automation accessibility tree. macOS AX would need a
+    // TCC-gated native bridge — omitted so the tool stays unlisted there.
+    ...(process.platform === 'win32'
+      ? {
+          async readUiElements(opts: {
+            filter?: string
+            maxElements?: number
+          }): Promise<UiElementsResult> {
+            return callPythonHelper('ui_elements', {
+              filter: opts.filter,
+              maxElements: opts.maxElements,
+            })
+          },
+        }
+      : {}),
 
     async drag(from, to): Promise<void> {
       await callPythonHelper('drag', { from, to })

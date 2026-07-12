@@ -543,6 +543,114 @@ def open_app(bundle_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# UI element enumeration (UI Automation accessibility tree)
+# ---------------------------------------------------------------------------
+
+# Control types worth surfacing for localization. Static text and pure
+# containers are excluded — they explode the element count without being
+# click targets. Names of composite controls (list/tree/tab items) usually
+# carry the text a user would visually target anyway.
+INTERACTIVE_CONTROL_TYPES = {
+    "ButtonControl",
+    "CheckBoxControl",
+    "ComboBoxControl",
+    "EditControl",
+    "HyperlinkControl",
+    "ListItemControl",
+    "MenuItemControl",
+    "RadioButtonControl",
+    "SliderControl",
+    "SpinnerControl",
+    "SplitButtonControl",
+    "TabItemControl",
+    "TreeItemControl",
+}
+
+UI_ELEMENTS_MAX_DEPTH = 40
+UI_ELEMENTS_TIME_BUDGET_S = 3.0
+UI_ELEMENTS_NAME_MAX_CHARS = 100
+
+
+def ui_elements(filter_text: str | None, max_elements: int) -> dict[str, Any]:
+    """Walk the focused window's UI Automation tree and return interactive
+    elements with their screen-coordinate centers (same coordinate space as
+    the click/screenshot commands — physical pixels, virtual-screen origin).
+    """
+    import uiautomation as auto
+    import win32gui
+
+    hwnd = win32gui.GetForegroundWindow()
+    if not hwnd:
+        raise RuntimeError("No foreground window to read UI elements from")
+
+    window_title = win32gui.GetWindowText(hwnd)
+    app = frontmost_app() or {}
+    needle = (filter_text or "").strip().lower()
+
+    root = auto.ControlFromHandle(hwnd)
+    if root is None:
+        raise RuntimeError("Could not attach UI Automation to the foreground window")
+
+    deadline = time.monotonic() + UI_ELEMENTS_TIME_BUDGET_S
+    elements: list[dict[str, Any]] = []
+    truncated = False
+
+    # Iterative DFS in document order — matches top-to-bottom visual reading
+    # order better than BFS for typical window layouts.
+    stack: list[tuple[Any, int]] = [(root, 0)]
+    while stack:
+        if len(elements) >= max_elements or time.monotonic() > deadline:
+            truncated = True
+            break
+        control, depth = stack.pop()
+        try:
+            children = control.GetChildren() if depth < UI_ELEMENTS_MAX_DEPTH else []
+        except Exception:
+            children = []
+        # Reversed so the stack pops children in natural order.
+        for child in reversed(children):
+            stack.append((child, depth + 1))
+
+        if depth == 0:
+            continue
+        try:
+            control_type = control.ControlTypeName
+            if control_type not in INTERACTIVE_CONTROL_TYPES:
+                continue
+            if control.IsOffscreen:
+                continue
+            rect = control.BoundingRectangle
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            if width <= 0 or height <= 0:
+                continue
+            name = (control.Name or "").strip()
+        except Exception:
+            continue
+        if needle and needle not in name.lower():
+            continue
+        if len(name) > UI_ELEMENTS_NAME_MAX_CHARS:
+            name = name[: UI_ELEMENTS_NAME_MAX_CHARS - 3] + "..."
+        elements.append({
+            # "Control" suffix is UIA noise — "Button" reads better than
+            # "ButtonControl" and saves tokens over hundreds of elements.
+            "role": control_type.removesuffix("Control"),
+            "name": name,
+            "x": rect.left + width // 2,
+            "y": rect.top + height // 2,
+            "width": width,
+            "height": height,
+        })
+
+    return {
+        "app": app.get("displayName") or "",
+        "windowTitle": window_title,
+        "elements": elements,
+        "truncated": truncated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Clipboard (pyperclip — cross-platform)
 # ---------------------------------------------------------------------------
 
@@ -730,6 +838,11 @@ def main() -> int:
         if command == "cursor_position":
             x, y = pyautogui.position()
             json_output({"ok": True, "result": {"x": int(x), "y": int(y)}})
+            return 0
+        if command == "ui_elements":
+            max_elements = int(payload.get("maxElements") or 300)
+            result = ui_elements(payload.get("filter"), max(1, min(max_elements, 1000)))
+            json_output({"ok": True, "result": result})
             return 0
         if command == "frontmost_app":
             json_output({"ok": True, "result": frontmost_app()})

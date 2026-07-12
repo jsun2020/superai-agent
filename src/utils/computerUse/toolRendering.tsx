@@ -21,6 +21,7 @@ function fmtCoord(c: [number, number] | undefined): string {
 const RESULT_SUMMARY: Readonly<Partial<Record<string, string>>> = {
   screenshot: 'Captured',
   zoom: 'Captured',
+  read_ui_elements: 'Read UI elements',
   request_access: 'Access updated',
   left_click: 'Clicked',
   right_click: 'Clicked',
@@ -86,6 +87,8 @@ export function getComputerUseMCPRenderingOverrides(toolName: string): {
             const r = input.region;
             return Array.isArray(r) && r.length === 4 ? `[${r[0]}, ${r[1]}, ${r[2]}, ${r[3]}]` : '';
           }
+        case 'read_ui_elements':
+          return typeof input.filter === 'string' && input.filter ? `"${truncateToWidth(input.filter, 40)}"` : '';
         case 'wait':
           return typeof input.duration === 'number' ? `${input.duration}s` : '';
         case 'write_clipboard':

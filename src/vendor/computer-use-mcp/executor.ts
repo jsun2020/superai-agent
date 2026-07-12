@@ -46,6 +46,25 @@ export interface ResolvePrepareCaptureResult extends ScreenshotResult {
   captureError?: string
 }
 
+/** One interactive element from the OS accessibility tree. Coordinates are
+ *  the element's center in logical points (virtual-screen origin) — the same
+ *  space `click(x, y)` consumes. */
+export interface UiElement {
+  role: string
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface UiElementsResult {
+  app: string
+  windowTitle: string
+  elements: UiElement[]
+  truncated: boolean
+}
+
 export interface ComputerExecutor {
   capabilities: {
     screenshotFiltering: 'native' | 'none'
@@ -89,6 +108,13 @@ export interface ComputerExecutor {
   mouseDown(): Promise<void>
   mouseUp(): Promise<void>
   getCursorPosition(): Promise<{ x: number; y: number }>
+  /** Enumerate interactive UI elements of the focused window via the OS
+   *  accessibility tree. Optional — only hosts with an accessibility bridge
+   *  (Windows UIA) implement it; `read_ui_elements` is unlisted otherwise. */
+  readUiElements?(opts: {
+    filter?: string
+    maxElements?: number
+  }): Promise<UiElementsResult>
   getFrontmostApp(): Promise<FrontmostApp | null>
   appUnderPoint(x: number, y: number): Promise<{ bundleId: string; displayName: string } | null>
   listInstalledApps(): Promise<InstalledApp[]>

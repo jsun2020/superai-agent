@@ -46,6 +46,7 @@ import type {
   DisplayGeometry,
   InstalledApp,
   ScreenshotResult,
+  UiElement,
 } from "./executor.js";
 import { isSystemKeyCombo } from "./keyBlocklist.js";
 import { validateClickTarget } from "./pixelCompare.js";
@@ -3129,6 +3130,170 @@ async function handleCursorPosition(
 }
 
 /**
+ * Convert one accessibility-tree element (logical points, virtual-screen
+ * origin) into the model's click coordinate space — the exact INVERSE of
+ * `scaleCoord`, so a returned (x, y) passed straight to left_click resolves
+ * back to the element center. Per-branch:
+ *
+ *   - `normalized_0_100`: percentage of the selected display.
+ *   - `pixels` + lastScreenshot: image-pixel transform against capture-time
+ *     dims (same as handleCursorPosition). Elements outside the captured
+ *     display are dropped (null) — image-px coords would be garbage there.
+ *   - `pixels`, no screenshot yet: inverse of scaleCoord's /scaleFactor
+ *     fallback. This keeps the no-screenshot fast path usable: coords are
+ *     chosen so the fallback transform lands on the element.
+ *
+ * Width/height are scaled with the same ratio so sizes stay comparable to
+ * what the model would measure on a screenshot.
+ */
+function uiElementToModelSpace(
+  el: UiElement,
+  mode: CoordinateMode,
+  display: DisplayGeometry,
+  lastScreenshot: ScreenshotResult | undefined,
+): UiElement | null {
+  if (mode === "normalized_0_100") {
+    const localX = el.x - display.originX;
+    const localY = el.y - display.originY;
+    if (
+      localX < 0 ||
+      localX > display.width ||
+      localY < 0 ||
+      localY > display.height
+    ) {
+      return null;
+    }
+    const round1 = (n: number): number => Math.round(n * 10) / 10;
+    return {
+      ...el,
+      x: round1((localX / display.width) * 100),
+      y: round1((localY / display.height) * 100),
+      width: round1((el.width / display.width) * 100),
+      height: round1((el.height / display.height) * 100),
+    };
+  }
+
+  // mode === "pixels"
+  if (lastScreenshot) {
+    const localX = el.x - lastScreenshot.originX;
+    const localY = el.y - lastScreenshot.originY;
+    if (
+      localX < 0 ||
+      localX > lastScreenshot.displayWidth ||
+      localY < 0 ||
+      localY > lastScreenshot.displayHeight
+    ) {
+      return null;
+    }
+    const ratioX = lastScreenshot.width / lastScreenshot.displayWidth;
+    const ratioY = lastScreenshot.height / lastScreenshot.displayHeight;
+    return {
+      ...el,
+      x: Math.round(localX * ratioX),
+      y: Math.round(localY * ratioY),
+      width: Math.round(el.width * ratioX),
+      height: Math.round(el.height * ratioY),
+    };
+  }
+
+  // Cold start (no screenshot yet): produce coords that scaleCoord's
+  // /scaleFactor fallback inverts exactly.
+  const localX = el.x - display.originX;
+  const localY = el.y - display.originY;
+  if (
+    localX < 0 ||
+    localX > display.width ||
+    localY < 0 ||
+    localY > display.height
+  ) {
+    return null;
+  }
+  return {
+    ...el,
+    x: Math.round(localX * display.scaleFactor),
+    y: Math.round(localY * display.scaleFactor),
+    width: Math.round(el.width * display.scaleFactor),
+    height: Math.round(el.height * display.scaleFactor),
+  };
+}
+
+/** Output cap AFTER any name filter — keeps worst-case tool results bounded
+ *  (~40 tokens/element × 150 ≈ 6k tokens). */
+const UI_ELEMENTS_OUTPUT_CAP = 150;
+
+/**
+ * Fast localization via the OS accessibility tree (Windows UIA). Read-only —
+ * no input is synthesized, so no frontmost gate and no prepareForAction; the
+ * allowlist-empty gate mirrors screenshot's §2 (this reads window content).
+ */
+async function handleReadUiElements(
+  adapter: ComputerUseHostAdapter,
+  args: Record<string, unknown>,
+  overrides: ComputerUseOverrides,
+): Promise<CuCallToolResult> {
+  if (overrides.allowedApps.length === 0) {
+    return errorResult(
+      "No applications are granted for this session. Call request_access first.",
+      "allowlist_empty",
+    );
+  }
+  const readUiElements = adapter.executor.readUiElements?.bind(
+    adapter.executor,
+  );
+  if (!readUiElements) {
+    return errorResult(
+      "read_ui_elements is not supported on this platform.",
+      "bad_args",
+    );
+  }
+  const filter = args.filter;
+  if (filter !== undefined && typeof filter !== "string") {
+    return errorResult("filter must be a string", "bad_args");
+  }
+
+  const result = await readUiElements({ filter });
+  const display = await adapter.executor.getDisplaySize(
+    overrides.selectedDisplayId,
+  );
+
+  const elements: UiElement[] = [];
+  let offDisplayCount = 0;
+  for (const el of result.elements) {
+    const converted = uiElementToModelSpace(
+      el,
+      overrides.coordinateMode,
+      display,
+      overrides.lastScreenshot,
+    );
+    if (converted === null) {
+      offDisplayCount += 1;
+      continue;
+    }
+    if (elements.length < UI_ELEMENTS_OUTPUT_CAP) {
+      elements.push(converted);
+    }
+  }
+  const capped = result.elements.length - offDisplayCount > elements.length;
+
+  return okJson({
+    app: result.app,
+    windowTitle: result.windowTitle,
+    coordinateSpace:
+      overrides.coordinateMode === "normalized_0_100"
+        ? "normalized_0_100"
+        : overrides.lastScreenshot
+          ? "image_pixels"
+          : "click_coordinates",
+    note: "Pass (x, y) directly to click tools. Elements are from the FOCUSED window only.",
+    elements,
+    ...(result.truncated || capped
+      ? { truncated: true, hint: "List truncated — use `filter` to narrow." }
+      : {}),
+    ...(offDisplayCount > 0 ? { offDisplayCount } : {}),
+  });
+}
+
+/**
  * Presses each key in the
  * chord, sleeps duration seconds, releases in reverse. Same duration bounds
  * as wait. Keyboard action → frontmost gate applies; same systemKeyCombos
@@ -3509,6 +3674,9 @@ async function dispatchAction(
     case "cursor_position":
       return handleCursorPosition(adapter, overrides);
 
+    case "read_ui_elements":
+      return handleReadUiElements(adapter, a, overrides);
+
     case "hold_key":
       return handleHoldKey(adapter, a, overrides, subGates);
 
@@ -3731,6 +3899,7 @@ export async function handleToolCall(
 export const _test = {
   scaleCoord,
   coordToPercentageForPixelCompare,
+  uiElementToModelSpace,
   segmentGraphemes,
   decodedByteLength,
   resolveRequestedApps,
