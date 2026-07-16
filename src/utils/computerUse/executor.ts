@@ -16,6 +16,9 @@ import type {
   ScreenshotResult,
   UiElementsResult,
 } from '../../vendor/computer-use-mcp/index.js'
+import { readFile } from 'fs/promises'
+import { homedir } from 'os'
+import { join } from 'path'
 import { API_RESIZE_PARAMS, targetImageSize } from '../../vendor/computer-use-mcp/index.js'
 import { sleep } from '../sleep.js'
 import {
@@ -27,6 +30,27 @@ import { callPythonHelper } from './pythonBridge.js'
 
 const SCREENSHOT_JPEG_QUALITY = 0.75
 const MOVE_SETTLE_MS = 50
+
+/**
+ * Look up the stored exe path of a manually-authorized app from
+ * ~/.claude/superai/computer-use-config.json. Registry-resolvable apps have
+ * no stored path and return undefined — the helper resolves them itself.
+ */
+async function lookupAuthorizedAppPath(bundleId: string): Promise<string | undefined> {
+  try {
+    const configPath = join(
+      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+      'superai',
+      'computer-use-config.json',
+    )
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      authorizedApps?: { bundleId: string; path?: string }[]
+    }
+    return config.authorizedApps?.find(a => a.bundleId === bundleId && a.path)?.path
+  } catch {
+    return undefined
+  }
+}
 const hostBundleId =
   process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID || CLI_HOST_BUNDLE_ID
 
@@ -270,7 +294,12 @@ export function createCliExecutor(_opts: {
     },
 
     async openApp(bundleId: string): Promise<void> {
-      await callPythonHelper('open_app', { bundleId })
+      // Manually-authorized (portable) apps have no Uninstall registry entry
+      // for the helper to resolve — pass their stored exe path through.
+      await callPythonHelper('open_app', {
+        bundleId,
+        path: await lookupAuthorizedAppPath(bundleId),
+      })
     },
   }
 }

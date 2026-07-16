@@ -426,6 +426,31 @@ export async function handleComputerUseApi(
     return Response.json({ apps })
   }
 
+  // POST /api/computer-use/apps/resolve — validate a manually-entered app
+  // path (portable apps have no Uninstall registry entry) and derive the
+  // bundleId the authorization gate matches on (exe stem).
+  if (action === 'apps' && segments[3] === 'resolve' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as { path?: string }
+    const rawPath = typeof body.path === 'string' ? body.path.trim().replace(/^"|"$/g, '') : ''
+    if (!rawPath) {
+      return Response.json({ error: 'PATH_REQUIRED', message: 'path is required' }, { status: 400 })
+    }
+    const parsed = path.parse(rawPath)
+    if (isWindows && parsed.ext.toLowerCase() !== '.exe') {
+      return Response.json(
+        { error: 'NOT_EXECUTABLE', message: 'Path must point to an .exe file' },
+        { status: 400 },
+      )
+    }
+    if (!(await pathExists(rawPath))) {
+      return Response.json(
+        { error: 'FILE_NOT_FOUND', message: `File not found: ${rawPath}` },
+        { status: 404 },
+      )
+    }
+    return Response.json({ bundleId: parsed.name, displayName: parsed.name, path: rawPath })
+  }
+
   // GET /api/computer-use/authorized-apps — current authorized app config
   if (action === 'authorized-apps' && req.method === 'GET') {
     const config = await loadConfig()

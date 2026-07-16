@@ -33,7 +33,7 @@ class TestKeyMap(unittest.TestCase):
     def _load_key_map(self, helper_path: Path) -> dict[str, str]:
         """Extract KEY_MAP from a helper by importing it with mocked deps."""
         # Read the file and extract just the KEY_MAP dict
-        source = helper_path.read_text()
+        source = helper_path.read_text(encoding="utf-8")
         # Find KEY_MAP definition
         start = source.index("KEY_MAP = {")
         # Find the matching closing brace
@@ -126,7 +126,7 @@ class TestJSONProtocol(unittest.TestCase):
 
     def _parse_main_commands(self, helper_path: Path) -> list[str]:
         """Extract all command names from the main() dispatcher."""
-        source = helper_path.read_text()
+        source = helper_path.read_text(encoding="utf-8")
         commands = []
         for line in source.splitlines():
             stripped = line.strip()
@@ -135,12 +135,17 @@ class TestJSONProtocol(unittest.TestCase):
                 commands.append(cmd)
         return commands
 
+    # Commands intentionally implemented on one platform only. ui_elements
+    # (fast localization via Windows UI Automation) is gated to win32 in
+    # tools.ts, so mac_helper has no counterpart.
+    WINDOWS_ONLY_COMMANDS = {"ui_elements"}
+
     def test_both_helpers_same_commands(self):
-        """Both helpers must support the exact same set of commands."""
+        """Both helpers must support the same commands, minus declared platform-only ones."""
         if not MAC_HELPER.exists() or not WIN_HELPER.exists():
             self.skipTest("Both helpers required")
         mac_cmds = set(self._parse_main_commands(MAC_HELPER))
-        win_cmds = set(self._parse_main_commands(WIN_HELPER))
+        win_cmds = set(self._parse_main_commands(WIN_HELPER)) - self.WINDOWS_ONLY_COMMANDS
         self.assertEqual(mac_cmds, win_cmds,
                          f"Command sets differ.\nOnly in mac: {mac_cmds - win_cmds}\nOnly in win: {win_cmds - mac_cmds}")
 
@@ -199,7 +204,7 @@ class TestHelperOutputFormat(unittest.TestCase):
         for helper in [MAC_HELPER, WIN_HELPER]:
             if not helper.exists():
                 continue
-            source = helper.read_text()
+            source = helper.read_text(encoding="utf-8")
             self.assertIn("def json_output(", source,
                           f"{helper.name} missing json_output function")
             self.assertIn("def error_output(", source,
@@ -210,7 +215,7 @@ class TestHelperOutputFormat(unittest.TestCase):
         for helper in [MAC_HELPER, WIN_HELPER]:
             if not helper.exists():
                 continue
-            source = helper.read_text()
+            source = helper.read_text(encoding="utf-8")
             self.assertIn('if __name__ == "__main__":', source,
                           f"{helper.name} missing __main__ guard")
             self.assertIn("def main()", source,
@@ -226,7 +231,7 @@ class TestWinHelperPermissions(unittest.TestCase):
             self.skipTest("win_helper.py not found")
 
         # Extract and exec just the check_permissions function
-        source = WIN_HELPER.read_text()
+        source = WIN_HELPER.read_text(encoding="utf-8")
 
         # Find the function
         self.assertIn("def check_permissions()", source)
@@ -254,7 +259,7 @@ class TestMacHelperPermissions(unittest.TestCase):
         if not MAC_HELPER.exists():
             self.skipTest("mac_helper.py not found")
 
-        source = MAC_HELPER.read_text()
+        source = MAC_HELPER.read_text(encoding="utf-8")
 
         self.assertIn("def detect_accessibility_permission()", source)
         self.assertIn("AXIsProcessTrusted", source)
@@ -276,7 +281,7 @@ class TestMacHelperPermissions(unittest.TestCase):
         if not MAC_HELPER.exists():
             self.skipTest("mac_helper.py not found")
 
-        source = MAC_HELPER.read_text()
+        source = MAC_HELPER.read_text(encoding="utf-8")
         self.assertIn("def paste_clipboard()", source)
         self.assertIn('send_keystroke_via_osascript("v", ["command"])', source)
         self.assertIn('if parts == ["command", "v"]:', source)
@@ -288,7 +293,7 @@ class TestCrossPlatformFunctions(unittest.TestCase):
 
     def _get_function_body(self, helper_path: Path, func_name: str) -> str:
         """Extract a function's body (code lines only, no comments/blanks)."""
-        source = helper_path.read_text()
+        source = helper_path.read_text(encoding="utf-8")
         marker = f"def {func_name}("
         if marker not in source:
             return ""
@@ -316,6 +321,92 @@ class TestCrossPlatformFunctions(unittest.TestCase):
             win_src = self._get_function_body(WIN_HELPER, func)
             self.assertEqual(mac_src, win_src,
                              f"{func} should be identical across platforms")
+
+
+def _import_win_helper():
+    """Import win_helper with GUI-only deps mocked so pure logic runs anywhere."""
+    for mod_name in ("mss", "PIL", "pyautogui", "pyperclip", "screeninfo"):
+        sys.modules.setdefault(mod_name, MagicMock())
+    sys.path.insert(0, str(RUNTIME_DIR))
+    try:
+        import win_helper
+        return win_helper
+    finally:
+        sys.path.remove(str(RUNTIME_DIR))
+
+
+class TestInstalledAppsFilter(unittest.TestCase):
+    """Junk filtering for the Authorized Apps picker (win_helper.installed_apps)."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not WIN_HELPER.exists():
+            raise unittest.SkipTest("win_helper.py not found")
+        cls.wh = _import_win_helper()
+
+    def test_junk_names_are_rejected(self):
+        for name in (
+            "AutoCAD 2021 Language Pack - English",
+            "ACA & MEP 2021 Object Enabler",
+            "Microsoft Visual C++ 2015-2022 Redistributable (x64)",
+            "Update for Windows 10",
+            "AutoCAD 2021 Hotfix 2",
+        ):
+            self.assertTrue(self.wh._is_junk_name(name), name)
+
+    def test_real_app_names_are_kept(self):
+        for name in ("PixPin", "WeChat", "7-Zip 24.06 (x64)", "AutoCAD 2021 - English", "Adobe Photoshop 2025"):
+            self.assertFalse(self.wh._is_junk_name(name), name)
+
+    def test_uninstaller_stems(self):
+        for stem in ("unins000", "uninstall", "Uninstaller", "setup", "installer", "remove"):
+            self.assertTrue(self.wh._looks_like_uninstaller(stem), stem)
+        for stem in ("7zFM", "PixPin", "acad", "CleanMaster"):
+            self.assertFalse(self.wh._looks_like_uninstaller(stem), stem)
+
+    def test_pick_exe_from_dir_prefers_largest_non_uninstaller(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.exe"
+            main.write_bytes(b"M" * 1000)
+            # Bigger, but an uninstaller — must lose.
+            (Path(tmp) / "unins000.exe").write_bytes(b"U" * 5000)
+            (Path(tmp) / "readme.txt").write_bytes(b"hi")
+            picked = self.wh._pick_exe_from_dir(tmp)
+            self.assertEqual(Path(picked).name, "main.exe")
+
+    def test_pick_exe_from_dir_empty(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(self.wh._pick_exe_from_dir(tmp))
+
+    def test_resolve_app_exe_uses_existing_display_icon(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "app.exe"
+            exe.write_bytes(b"MZ")
+            self.assertEqual(self.wh._resolve_app_exe(str(exe), ""), str(exe))
+
+    def test_resolve_app_exe_falls_back_to_install_location_scan(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "tool.exe"
+            exe.write_bytes(b"MZ")
+            missing_icon = str(Path(tmp) / "gone.exe")
+            self.assertEqual(self.wh._resolve_app_exe(missing_icon, tmp), str(exe))
+
+    def test_resolve_app_exe_rejects_entries_without_exe(self):
+        self.assertIsNone(self.wh._resolve_app_exe("", ""))
+
+    def test_open_app_uses_stored_custom_path(self):
+        import os as os_mod
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "CleanMaster.exe"
+            exe.write_bytes(b"MZ")
+            with patch.object(os_mod, "startfile", create=True) as started:
+                self.wh.open_app("CleanMaster", str(exe))
+                started.assert_called_once_with(str(exe))
 
 
 if __name__ == "__main__":

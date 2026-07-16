@@ -43,6 +43,9 @@ export type AuthorizedApp = {
   bundleId: string
   displayName: string
   authorizedAt: string
+  /** Exe path of a manually-added (portable) app; absent for registry apps */
+  path?: string
+  source?: 'custom'
 }
 
 export type ComputerUseConfig = {
@@ -63,6 +66,9 @@ export const computerUseApi = {
   },
   getInstalledApps() {
     return api.get<{ apps: InstalledApp[] }>('/api/computer-use/apps')
+  },
+  resolveCustomApp(path: string) {
+    return api.post<InstalledApp>('/api/computer-use/apps/resolve', { path })
   },
   getAuthorizedApps() {
     return api.get<ComputerUseConfig>('/api/computer-use/authorized-apps')

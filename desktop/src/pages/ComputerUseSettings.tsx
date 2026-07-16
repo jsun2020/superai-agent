@@ -61,6 +61,11 @@ export function ComputerUseSettings() {
   const [clipboardAccess, setClipboardAccess] = useState(true)
   const [systemKeys, setSystemKeys] = useState(true)
 
+  // Manually-added custom apps (portable software without a registry entry)
+  const [customPath, setCustomPath] = useState('')
+  const [customError, setCustomError] = useState<string | null>(null)
+  const [addingCustom, setAddingCustom] = useState(false)
+
   const fetchStatus = useCallback(async () => {
     setCheckState('loading')
     try {
@@ -116,24 +121,9 @@ export function ComputerUseSettings() {
     }
   }
 
-  const toggleApp = (app: InstalledApp) => {
-    const newSet = new Set(authorizedBundleIds)
-    let newAuthorized = [...authorizedApps]
-    if (newSet.has(app.bundleId)) {
-      newSet.delete(app.bundleId)
-      newAuthorized = newAuthorized.filter(a => a.bundleId !== app.bundleId)
-    } else {
-      newSet.add(app.bundleId)
-      newAuthorized.push({
-        bundleId: app.bundleId,
-        displayName: app.displayName,
-        authorizedAt: new Date().toISOString(),
-      })
-    }
-    setAuthorizedBundleIds(newSet)
+  const persistAuthorized = (newAuthorized: AuthorizedApp[]) => {
+    setAuthorizedBundleIds(new Set(newAuthorized.map(a => a.bundleId)))
     setAuthorizedApps(newAuthorized)
-
-    // Auto-save
     computerUseApi.setAuthorizedApps({
       authorizedApps: newAuthorized,
       grantFlags: { clipboardRead: clipboardAccess, clipboardWrite: clipboardAccess, systemKeyCombos: systemKeys },
@@ -141,6 +131,60 @@ export function ComputerUseSettings() {
       setAppsSaved(true)
       setTimeout(() => setAppsSaved(false), 1500)
     })
+  }
+
+  const toggleApp = (app: InstalledApp) => {
+    if (authorizedBundleIds.has(app.bundleId)) {
+      persistAuthorized(authorizedApps.filter(a => a.bundleId !== app.bundleId))
+    } else {
+      persistAuthorized([
+        ...authorizedApps,
+        {
+          bundleId: app.bundleId,
+          displayName: app.displayName,
+          authorizedAt: new Date().toISOString(),
+        },
+      ])
+    }
+  }
+
+  const browseCustomApp = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'Application', extensions: ['exe'] }],
+      })
+      if (typeof selected === 'string') setCustomPath(selected)
+    } catch {
+      // Dialog plugin unavailable (browser mode) — user can type the path.
+    }
+  }
+
+  const addCustomApp = async () => {
+    const trimmed = customPath.trim()
+    if (!trimmed || addingCustom) return
+    setCustomError(null)
+    setAddingCustom(true)
+    try {
+      const resolved = await computerUseApi.resolveCustomApp(trimmed)
+      setCustomPath('')
+      if (authorizedBundleIds.has(resolved.bundleId)) return
+      persistAuthorized([
+        ...authorizedApps,
+        {
+          bundleId: resolved.bundleId,
+          displayName: resolved.displayName,
+          authorizedAt: new Date().toISOString(),
+          path: resolved.path,
+          source: 'custom',
+        },
+      ])
+    } catch {
+      setCustomError(t('settings.computerUse.customAddError'))
+    } finally {
+      setAddingCustom(false)
+    }
   }
 
   const toggleFlag = (flag: 'clipboard' | 'systemKeys', value: boolean) => {
@@ -170,14 +214,23 @@ export function ComputerUseSettings() {
     ? PYTHON_DOWNLOAD_URLS[status.platform] ?? 'https://www.python.org/downloads/'
     : 'https://www.python.org/downloads/'
 
+  // Merge manually-added apps (not present in the registry list) into the picker
+  const allApps = useMemo(() => {
+    const installedIds = new Set(installedApps.map(a => a.bundleId))
+    const custom = authorizedApps
+      .filter(a => !installedIds.has(a.bundleId))
+      .map(a => ({ bundleId: a.bundleId, displayName: a.displayName, path: a.path ?? '', isCustom: true }))
+    return [...custom, ...installedApps.map(a => ({ ...a, isCustom: false }))]
+  }, [installedApps, authorizedApps])
+
   // Filter apps by search query
   const filteredApps = useMemo(() => {
-    if (!searchQuery) return installedApps
+    if (!searchQuery) return allApps
     const q = searchQuery.toLowerCase()
-    return installedApps.filter(
+    return allApps.filter(
       a => a.displayName.toLowerCase().includes(q) || a.bundleId.toLowerCase().includes(q)
     )
-  }, [installedApps, searchQuery])
+  }, [allApps, searchQuery])
 
   // Sort: authorized apps first, then alphabetical
   const sortedApps = useMemo(() => {
@@ -393,12 +446,48 @@ export function ComputerUseSettings() {
                 />
               </div>
 
+              {/* Add custom app (portable software without a registry entry) */}
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPath}
+                    onChange={e => { setCustomPath(e.target.value); setCustomError(null) }}
+                    onKeyDown={e => { if (e.key === 'Enter') addCustomApp() }}
+                    placeholder={t('settings.computerUse.customPathPlaceholder')}
+                    className="flex-1 px-3 py-2 text-sm bg-[var(--color-surface-container-low)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-brand)]"
+                  />
+                  <button
+                    onClick={browseCustomApp}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm text-[var(--color-text-secondary)] border border-[var(--color-border)] rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">folder_open</span>
+                    {t('settings.computerUse.customBrowse')}
+                  </button>
+                  <button
+                    onClick={addCustomApp}
+                    disabled={!customPath.trim() || addingCustom}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[var(--color-brand)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                    {t('settings.computerUse.customAdd')}
+                  </button>
+                </div>
+                {customError ? (
+                  <p className="text-xs text-red-400">{customError}</p>
+                ) : (
+                  <p className="text-xs text-[var(--color-text-tertiary)]">
+                    {t('settings.computerUse.customAddHint')}
+                  </p>
+                )}
+              </div>
+
               {/* App list */}
               {appsLoading ? (
                 <div className="py-6 text-center text-sm text-[var(--color-text-tertiary)]">
                   {t('settings.computerUse.appsLoading')}
                 </div>
-              ) : installedApps.length === 0 ? (
+              ) : allApps.length === 0 ? (
                 <div className="py-6 text-center text-sm text-[var(--color-text-tertiary)]">
                   {t('settings.computerUse.appsEmpty')}
                 </div>
@@ -424,11 +513,16 @@ export function ComputerUseSettings() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                            {app.displayName}
+                          <div className="text-sm font-medium text-[var(--color-text-primary)] truncate flex items-center gap-2">
+                            <span className="truncate">{app.displayName}</span>
+                            {app.isCustom && (
+                              <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-[var(--color-brand)]/10 text-[var(--color-text-accent)]">
+                                {t('settings.computerUse.customBadge')}
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-[var(--color-text-tertiary)] truncate font-mono">
-                            {app.bundleId}
+                            {app.isCustom && app.path ? app.path : app.bundleId}
                           </div>
                         </div>
                       </button>

@@ -278,8 +278,116 @@ def _get_exe_path_for_pid(pid: int) -> str | None:
         return None
 
 
+# Uninstall-registry entries that are not standalone, controllable programs:
+# patches, language packs, MSI component installers, drivers. The runtime
+# authorization gate matches apps by exe stem (see frontmost_app), so an entry
+# that never resolves to a launchable .exe can never match a running app and
+# would be a dead checkbox in the Authorized Apps list.
+JUNK_NAME_KEYWORDS = (
+    "language pack",
+    "语言包",  # "language pack" in Simplified Chinese
+    "object enabler",
+    "redistributable",
+    "update for",
+    "hotfix",
+    "service pack",
+)
+
+_UNINSTALLER_STEM_PREFIXES = ("unins", "uninst", "remove")
+_INSTALLER_STEMS = {"setup", "install", "installer", "repair", "updater", "update", "msiexec"}
+
+
+def _is_junk_name(display_name: str) -> bool:
+    lowered = display_name.lower()
+    return any(keyword in lowered for keyword in JUNK_NAME_KEYWORDS)
+
+
+def _is_system_entry(app_key: Any) -> bool:
+    """True for registry entries hidden from Programs and Features:
+    SystemComponent=1, patches (ParentKeyName), and updates (ReleaseType)."""
+    import winreg
+
+    def read(value_name: str) -> Any:
+        try:
+            return winreg.QueryValueEx(app_key, value_name)[0]
+        except OSError:
+            return None
+
+    if read("SystemComponent") == 1:
+        return True
+    if read("ParentKeyName"):
+        return True
+    if read("ReleaseType"):
+        return True
+    return False
+
+
+def _looks_like_uninstaller(stem: str) -> bool:
+    lowered = stem.lower()
+    if lowered.startswith(_UNINSTALLER_STEM_PREFIXES):
+        return True
+    return lowered in _INSTALLER_STEMS
+
+
+def _pick_exe_from_dir(directory: str) -> str | None:
+    """Pick the most plausible main exe from an install dir (top level only).
+
+    Largest non-uninstaller .exe wins. entry.stat() is served from the
+    directory enumeration on Windows, so this costs no extra syscalls.
+    """
+    best: tuple[int, str] | None = None
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not entry.name.lower().endswith(".exe"):
+                    continue
+                if _looks_like_uninstaller(Path(entry.name).stem):
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    size = entry.stat().st_size
+                except OSError:
+                    continue
+                if best is None or size > best[0]:
+                    best = (size, entry.path)
+    except OSError:
+        return None
+    return best[1] if best else None
+
+
+def _resolve_app_exe(display_icon: str, install_location: str) -> str | None:
+    """Resolve an uninstall entry to a launchable exe, or None if it has none."""
+    for candidate in (display_icon, install_location):
+        if not candidate:
+            continue
+        candidate_path = Path(candidate)
+        if candidate_path.suffix.lower() != ".exe":
+            continue
+        if _looks_like_uninstaller(candidate_path.stem):
+            continue
+        try:
+            if candidate_path.exists():
+                return str(candidate_path)
+        except OSError:
+            continue
+    if install_location:
+        location = Path(install_location)
+        try:
+            if location.is_dir():
+                return _pick_exe_from_dir(str(location))
+        except OSError:
+            pass
+    return None
+
+
 def installed_apps() -> list[dict[str, Any]]:
-    """List installed programs from Windows registry and Start Menu shortcuts."""
+    """List installed programs from the Windows Uninstall registry.
+
+    Only entries that resolve to a launchable .exe are returned — everything
+    else (language packs, MSI components, patches) cannot be matched by the
+    authorization gate and only pollutes the picker.
+    """
     import winreg
 
     results: dict[str, dict[str, Any]] = {}
@@ -307,39 +415,36 @@ def installed_apps() -> list[dict[str, Any]]:
                 except OSError:
                     continue
                 try:
-                    display_name = winreg.QueryValueEx(app_key, "DisplayName")[0]
-                except OSError:
-                    winreg.CloseKey(app_key)
-                    continue
-                # Use the registry key name as a stable identifier (like bundleId)
-                try:
-                    install_location = winreg.QueryValueEx(app_key, "InstallLocation")[0]
-                except OSError:
-                    install_location = ""
-                try:
-                    display_icon = winreg.QueryValueEx(app_key, "DisplayIcon")[0]
-                except OSError:
-                    display_icon = ""
-                normalized_icon = str(display_icon).split(",")[0].strip().strip('"')
-                normalized_install_location = str(install_location).strip().strip('"')
-
-                bundle_id = name
-                for candidate in (normalized_icon, normalized_install_location):
-                    if not candidate:
+                    try:
+                        display_name = winreg.QueryValueEx(app_key, "DisplayName")[0]
+                    except OSError:
                         continue
-                    candidate_path = Path(candidate)
-                    if candidate_path.suffix.lower() == ".exe":
-                        bundle_id = candidate_path.stem
-                        break
+                    if _is_junk_name(str(display_name)) or _is_system_entry(app_key):
+                        continue
+                    try:
+                        install_location = winreg.QueryValueEx(app_key, "InstallLocation")[0]
+                    except OSError:
+                        install_location = ""
+                    try:
+                        display_icon = winreg.QueryValueEx(app_key, "DisplayIcon")[0]
+                    except OSError:
+                        display_icon = ""
+                    normalized_icon = str(display_icon).split(",")[0].strip().strip('"')
+                    normalized_install_location = str(install_location).strip().strip('"')
 
-                app_path = normalized_icon or normalized_install_location or ""
-                if bundle_id not in results:
-                    results[bundle_id] = {
-                        "bundleId": bundle_id,
-                        "displayName": str(display_name),
-                        "path": app_path,
-                    }
-                winreg.CloseKey(app_key)
+                    exe_path = _resolve_app_exe(normalized_icon, normalized_install_location)
+                    if not exe_path:
+                        continue
+
+                    bundle_id = Path(exe_path).stem
+                    if bundle_id not in results:
+                        results[bundle_id] = {
+                            "bundleId": bundle_id,
+                            "displayName": str(display_name),
+                            "path": exe_path,
+                        }
+                finally:
+                    winreg.CloseKey(app_key)
         finally:
             winreg.CloseKey(key)
 
@@ -475,8 +580,18 @@ def find_window_displays(bundle_ids: list[str]) -> list[dict[str, Any]]:
     return result
 
 
-def open_app(bundle_id: str) -> None:
-    """Open an application by its bundleId (exe path or program name)."""
+def open_app(bundle_id: str, path: str | None = None) -> None:
+    """Open an application by its bundleId (exe path or program name).
+
+    `path` is the stored exe path of a manually-authorized (portable) app,
+    which has no Uninstall registry entry to resolve from.
+    """
+    if path:
+        stored = Path(path)
+        if stored.exists():
+            os.startfile(str(stored))
+            return
+
     # Try to find the exe path from registry
     import winreg
     exe_path = None
@@ -857,7 +972,7 @@ def main() -> int:
             json_output({"ok": True, "result": running_apps()})
             return 0
         if command == "open_app":
-            open_app(str(payload["bundleId"]))
+            open_app(str(payload["bundleId"]), payload.get("path"))
             json_output({"ok": True, "result": True})
             return 0
         if command == "read_clipboard":
