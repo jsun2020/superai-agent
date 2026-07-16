@@ -351,18 +351,55 @@ class TestInstalledAppsFilter(unittest.TestCase):
             "Microsoft Visual C++ 2015-2022 Redistributable (x64)",
             "Update for Windows 10",
             "AutoCAD 2021 Hotfix 2",
+            # Driver utilities and developer kits (v0.2.6 cleanup)
+            "Intel(R) Rapid Storage Technology",
+            "Intel(R) Management Engine Components",
+            "Microsoft .NET SDK 8.0.414 (x64)",
+            "Windows Software Development Kit - Windows 10 SDK",
+            "NVIDIA Graphics Driver 552.22",
+            "Realtek Audio Drivers",
         ):
             self.assertTrue(self.wh._is_junk_name(name), name)
 
     def test_real_app_names_are_kept(self):
-        for name in ("PixPin", "WeChat", "7-Zip 24.06 (x64)", "AutoCAD 2021 - English", "Adobe Photoshop 2025"):
+        for name in (
+            "PixPin",
+            "WeChat",
+            "7-Zip 24.06 (x64)",
+            "AutoCAD 2021 - English",
+            "Adobe Photoshop 2025",
+            # "sdk"/"driver" must match whole words only (LL-008): these contain
+            # the letters but are real apps.
+            "Autodesk Desktop App",
+            "WebDrive Enterprise",
+        ):
             self.assertFalse(self.wh._is_junk_name(name), name)
 
     def test_uninstaller_stems(self):
-        for stem in ("unins000", "uninstall", "Uninstaller", "setup", "installer", "remove"):
+        for stem in (
+            "unins000", "uninstall", "Uninstaller", "setup", "installer", "remove",
+            # Installer tokens anywhere in the stem (v0.2.6): PowerBI registers
+            # its setup bundle exe as DisplayIcon.
+            "PBIDesktopSetupRS_x64", "MyAppInstaller", "FooUpdater",
+            # Background service exes that never match the frontmost gate
+            "OfficeClickToRun",
+        ):
             self.assertTrue(self.wh._looks_like_uninstaller(stem), stem)
         for stem in ("7zFM", "PixPin", "acad", "CleanMaster"):
             self.assertFalse(self.wh._looks_like_uninstaller(stem), stem)
+
+    def test_cached_installer_paths_are_rejected(self):
+        self.assertTrue(self.wh._is_cached_installer(
+            r"C:\ProgramData\Package Cache\{guid}\dotnet-sdk-8.0.414-win-x64.exe"))
+        self.assertFalse(self.wh._is_cached_installer(r"C:\Program Files\PixPin\PixPin.exe"))
+        # And _resolve_app_exe must not surface a Package Cache exe even if it exists
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp) / "Package Cache" / "v1"
+            cache_dir.mkdir(parents=True)
+            bundle = cache_dir / "dotnet-sdk-8.0.414-win-x64.exe"
+            bundle.write_bytes(b"MZ")
+            self.assertIsNone(self.wh._resolve_app_exe(str(bundle), str(cache_dir)))
 
     def test_pick_exe_from_dir_prefers_largest_non_uninstaller(self):
         import tempfile

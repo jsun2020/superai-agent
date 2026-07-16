@@ -291,15 +291,33 @@ JUNK_NAME_KEYWORDS = (
     "update for",
     "hotfix",
     "service pack",
+    "rapid storage technology",
+    "management engine",
 )
 
-_UNINSTALLER_STEM_PREFIXES = ("unins", "uninst", "remove")
-_INSTALLER_STEMS = {"setup", "install", "installer", "repair", "updater", "update", "msiexec"}
+# Whole-word matches (short tokens like "sdk" would false-positive as
+# substrings — e.g. hypothetical names ending in "...sdk"). Developer kits and
+# driver utilities are not controllable desktop apps.
+JUNK_NAME_WORDS = {"sdk", "driver", "drivers", "firmware", "chipset"}
+
+_UNINSTALLER_STEM_SUBSTRINGS = ("unins", "setup", "install", "updater")
+_INSTALLER_STEMS = {"remove", "repair", "update", "msiexec"}
+# Background/service exes that registry entries point at instead of the real
+# app binary. The gate matches the frontmost exe stem, so authorizing these
+# never takes effect (e.g. Office C2R entries resolve to OfficeClickToRun.exe
+# while Word/Project actually run as WINWORD/WINPROJ). Office apps can be
+# authorized precisely via the manual custom-app path.
+_NON_APP_EXE_STEMS = {"officeclicktorun"}
 
 
 def _is_junk_name(display_name: str) -> bool:
+    import re
+
     lowered = display_name.lower()
-    return any(keyword in lowered for keyword in JUNK_NAME_KEYWORDS)
+    if any(keyword in lowered for keyword in JUNK_NAME_KEYWORDS):
+        return True
+    words = set(re.findall(r"[a-z0-9]+", lowered))
+    return bool(words & JUNK_NAME_WORDS)
 
 
 def _is_system_entry(app_key: Any) -> bool:
@@ -324,9 +342,15 @@ def _is_system_entry(app_key: Any) -> bool:
 
 def _looks_like_uninstaller(stem: str) -> bool:
     lowered = stem.lower()
-    if lowered.startswith(_UNINSTALLER_STEM_PREFIXES):
+    if any(token in lowered for token in _UNINSTALLER_STEM_SUBSTRINGS):
         return True
-    return lowered in _INSTALLER_STEMS
+    return lowered in _INSTALLER_STEMS or lowered in _NON_APP_EXE_STEMS
+
+
+def _is_cached_installer(path: str) -> bool:
+    """WiX bundles (e.g. .NET SDK) register their cached installer exe under
+    ProgramData\\Package Cache as DisplayIcon — an installer, not an app."""
+    return "package cache" in path.lower()
 
 
 def _pick_exe_from_dir(directory: str) -> str | None:
@@ -364,14 +388,14 @@ def _resolve_app_exe(display_icon: str, install_location: str) -> str | None:
         candidate_path = Path(candidate)
         if candidate_path.suffix.lower() != ".exe":
             continue
-        if _looks_like_uninstaller(candidate_path.stem):
+        if _looks_like_uninstaller(candidate_path.stem) or _is_cached_installer(candidate):
             continue
         try:
             if candidate_path.exists():
                 return str(candidate_path)
         except OSError:
             continue
-    if install_location:
+    if install_location and not _is_cached_installer(install_location):
         location = Path(install_location)
         try:
             if location.is_dir():

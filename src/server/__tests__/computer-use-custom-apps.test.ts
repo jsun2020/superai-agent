@@ -69,8 +69,10 @@ describe('win_helper installed-apps filtering (source contract)', () => {
   test('helper filters junk registry entries and requires a launchable exe', async () => {
     const helper = await Bun.file(new URL('../../../runtime/win_helper.py', import.meta.url)).text()
     expect(helper).toContain('JUNK_NAME_KEYWORDS')
+    expect(helper).toContain('JUNK_NAME_WORDS')
     expect(helper).toContain('def _resolve_app_exe(')
     expect(helper).toContain('def _is_system_entry(')
+    expect(helper).toContain('def _is_cached_installer(')
     // open_app must accept the stored custom path for portable apps
     expect(helper).toContain('def open_app(bundle_id: str, path: str | None = None)')
     expect(helper).toContain('open_app(str(payload["bundleId"]), payload.get("path"))')
