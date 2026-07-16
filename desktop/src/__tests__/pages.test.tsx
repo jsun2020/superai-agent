@@ -500,7 +500,10 @@ describe('Design system compliance', () => {
   })
 
   it('Current brand color is used in content pages', () => {
-    const pages = [EmptySession]
+    // EmptySession's brand usages moved inside dropdown menus / selected
+    // states after the composer redesign, so its static markup no longer
+    // carries the token; AgentTeams renders it unconditionally.
+    const pages = [AgentTeams]
     for (const Page of pages) {
       const { container, unmount } = render(<Page />)
       const html = container.innerHTML

@@ -19,8 +19,13 @@ import { getShellConfigPaths } from '../../utils/shellConfig.js'
 import { getUserBinDir } from '../../utils/xdg.js'
 
 const DESKTOP_CLI_NAME = 'claude-haha'
-const PATH_BLOCK_START = '# >>> Claude Code Haha PATH >>>'
-const PATH_BLOCK_END = '# <<< Claude Code Haha PATH <<<'
+const PATH_BLOCK_START = '# >>> SuperAI Agent PATH >>>'
+const PATH_BLOCK_END = '# <<< SuperAI Agent PATH <<<'
+// Markers written into shell profiles by earlier releases. Still matched by
+// upsertManagedPathBlock so an upgrade replaces the old block in place
+// instead of appending a duplicate.
+const LEGACY_PATH_BLOCK_START = '# >>> Claude Code Haha PATH >>>'
+const LEGACY_PATH_BLOCK_END = '# <<< Claude Code Haha PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
 const WINDOWS_USER_BIN_EXPR = '%USERPROFILE%\\.local\\bin'
 
@@ -80,17 +85,24 @@ export function isPathEntryPresent(
     })
 }
 
+function markerPattern(start: string, end: string): RegExp {
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`${escape(start)}[\\s\\S]*?${escape(end)}\\n?`, 'm')
+}
+
 export function upsertManagedPathBlock(
   existingContent: string,
   block: string,
 ): string {
-  const escapedStart = PATH_BLOCK_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const escapedEnd = PATH_BLOCK_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}\\n?`, 'm')
   const nextBlock = `${block.trimEnd()}\n`
 
-  if (pattern.test(existingContent)) {
-    return existingContent.replace(pattern, nextBlock)
+  for (const pattern of [
+    markerPattern(PATH_BLOCK_START, PATH_BLOCK_END),
+    markerPattern(LEGACY_PATH_BLOCK_START, LEGACY_PATH_BLOCK_END),
+  ]) {
+    if (pattern.test(existingContent)) {
+      return existingContent.replace(pattern, nextBlock)
+    }
   }
 
   const trimmed = existingContent.trimEnd()
