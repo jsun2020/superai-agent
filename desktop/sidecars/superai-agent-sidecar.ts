@@ -18,7 +18,13 @@
  * launcher-only 参数。
  */
 
+import { registerVendorBinDir } from '../../src/utils/vendorBinDir'
 import { parseLauncherArgs, resolveSidecarInvocation } from './launcherRouting'
+
+// 便携包会把第三方工具二进制放在 exe 旁的 vendor/ 目录（如 officecli.exe，
+// 由 scripts/build-portable.ps1 staging）。必须在任何模式模块加载/子进程
+// spawn 之前把它加进 PATH。开发模式下没有 vendor 目录，此调用是 no-op。
+registerVendorBinDir()
 
 const rawArgs = process.argv.slice(2)
 const invocation = resolveSidecarInvocation(rawArgs)

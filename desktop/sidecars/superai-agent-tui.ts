@@ -11,6 +11,12 @@
  * experience never has to install Bun.
  */
 
+import { registerVendorBinDir } from '../../src/utils/vendorBinDir'
+
+// Portable builds stage third-party tool binaries (officecli.exe) in a
+// vendor/ folder next to this exe; put it on PATH before anything spawns.
+registerVendorBinDir()
+
 process.env.CALLER_DIR ||= process.cwd()
 
 // preload sets up the same shimmed `ant-internal` modules that the merged

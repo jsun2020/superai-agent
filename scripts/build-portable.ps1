@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [switch]$SkipInstall,
-  [switch]$SkipZip
+  [switch]$SkipZip,
+  [switch]$SkipOfficeCLI
 )
 
 # ============================================================
@@ -147,6 +148,60 @@ Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'superai-age
 
 Copy-Item -LiteralPath (Join-Path $repoRoot '.env.example') -Destination (Join-Path $portableDir '.env.example')
 
+# 2b) Vendor third-party tool binaries. The sidecar/TUI entrypoints prepend
+#     the exe-adjacent vendor\ folder to PATH at startup (src/utils/vendorBinDir.ts),
+#     so anything staged here is available to agent shell commands on machines
+#     with nothing else installed.
+#
+#     OfficeCLI (Apache-2.0, https://github.com/iOfficeAI/OfficeCLI) is the
+#     office agent's preferred document engine for docx/xlsx/pptx work.
+if (-not $SkipOfficeCLI) {
+  $vendorDir = Join-Path $portableDir 'vendor'
+  New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
+
+  $officecliCandidates = @()
+  if ($env:OFFICECLI_EXE) { $officecliCandidates += $env:OFFICECLI_EXE }
+  # npm global install keeps the real binary in the package's vendor folder
+  # (the PATH entry is only a .ps1/.cmd shim).
+  $officecliCandidates += (Join-Path $env:APPDATA 'npm\node_modules\@officecli\officecli\vendor\officecli.exe')
+  $officecliSrc = $officecliCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+  if (-not $officecliSrc) {
+    throw ("OfficeCLI binary not found (looked at OFFICECLI_EXE env and the npm global package). " +
+      "Run 'npm install -g @officecli/officecli' first, set OFFICECLI_EXE to the exe path, " +
+      "or pass -SkipOfficeCLI to build without it.")
+  }
+
+  Copy-Item -LiteralPath $officecliSrc -Destination (Join-Path $vendorDir 'officecli.exe')
+  $officecliVersion = & (Join-Path $vendorDir 'officecli.exe') --version
+  if ($LASTEXITCODE -ne 0) { throw "Staged vendor\officecli.exe failed 'officecli --version' (exit $LASTEXITCODE)" }
+  Write-Step "Vendored OfficeCLI $officecliVersion from $officecliSrc"
+
+  # Apache-2.0 redistribution notice: prefer the full upstream license text,
+  # fall back to a pointer notice when offline / behind a blocking proxy.
+  $licensePath = Join-Path $vendorDir 'OFFICECLI-LICENSE.txt'
+  $licenseFetched = $false
+  try {
+    Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/LICENSE' `
+      -OutFile $licensePath -TimeoutSec 20 -UseBasicParsing -ErrorAction Stop
+    if ((Get-Item $licensePath).Length -gt 1000) { $licenseFetched = $true }
+  } catch { }
+  if (-not $licenseFetched) {
+    $notice = @'
+This folder bundles OfficeCLI (officecli.exe), copyright the iOfficeAI project,
+licensed under the Apache License, Version 2.0.
+
+  Project: https://github.com/iOfficeAI/OfficeCLI
+  License: https://www.apache.org/licenses/LICENSE-2.0
+
+OfficeCLI is redistributed unmodified as a convenience so the built-in office
+agent can create and edit Word/Excel/PowerPoint documents out of the box.
+'@
+    Set-Content -LiteralPath $licensePath -Value $notice -Encoding UTF8
+  }
+} else {
+  Write-Step 'Skipping OfficeCLI vendoring (-SkipOfficeCLI)'
+}
+
 $readme = @'
 SuperAI Agent - Portable Windows Build
 ======================================
@@ -178,6 +233,10 @@ Files:
   superai-agent-sidecar-x86_64-...exe Target-triple alias Tauri''s externalBin needs
   superai-agent-tui-x86_64-...exe     Target-triple alias for the TUI
   .env.example                        Template - copy to .env and edit
+  vendor\officecli.exe                Bundled OfficeCLI document engine the
+                                      built-in office agent uses for Word /
+                                      Excel / PowerPoint tasks (Apache-2.0,
+                                      github.com/iOfficeAI/OfficeCLI)
 
 WebView2:
   SuperAIAgent.exe needs Microsoft Edge WebView2. Pre-installed on Windows 11
