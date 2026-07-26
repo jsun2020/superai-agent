@@ -23,6 +23,9 @@ Environment:
   SKIP_INSTALL=1   Skip `bun install` in the repo root and desktop app.
   SIGN_BUILD=1     Remove the default `--no-sign` flag and allow signed builds.
   OPEN_OUTPUT=1    Open the canonical artifact output directory in Finder after a successful build.
+  SKIP_OFFICECLI=1 Do not bundle the OfficeCLI document engine into the .app.
+  OFFICECLI_BIN    Explicit path to a Mach-O officecli binary to bundle
+                   (default: npm global package, then `command -v officecli`).
 
 Examples:
   ./desktop/scripts/build-macos-arm64.sh
@@ -149,6 +152,93 @@ if [[ -z "${LATEST_APP}" ]]; then
   LATEST_APP="$(find_latest_dir "${FALLBACK_APP_DIR}" '*.app')"
 fi
 
+# Bundle OfficeCLI (Apache-2.0, https://github.com/iOfficeAI/OfficeCLI) into
+# the .app at Contents/MacOS/vendor/. The sidecar/TUI entrypoints prepend the
+# exe-adjacent vendor/ dir to PATH at startup (src/utils/vendorBinDir.ts), so
+# the built-in office agent finds `officecli` on machines with nothing else
+# installed. Mirrors the Windows staging in scripts/build-portable.ps1.
+#
+# Must run BEFORE the outer (non-deep) codesign and the DMG build so the
+# vendored binary is inside the sealed bundle and the shipped image.
+stage_officecli() {
+  local app_bundle="$1"
+  local vendor_dir="${app_bundle}/Contents/MacOS/vendor"
+
+  local candidates=()
+  if [[ -n "${OFFICECLI_BIN:-}" ]]; then
+    candidates+=("${OFFICECLI_BIN}")
+  fi
+  if command -v npm >/dev/null 2>&1; then
+    local npm_root
+    npm_root="$(npm root -g 2>/dev/null || true)"
+    if [[ -n "${npm_root}" ]]; then
+      candidates+=("${npm_root}/@officecli/officecli/vendor/officecli")
+    fi
+  fi
+  if command -v officecli >/dev/null 2>&1; then
+    local on_path resolved
+    on_path="$(command -v officecli)"
+    resolved="$(readlink -f "${on_path}" 2>/dev/null || realpath "${on_path}" 2>/dev/null || echo "${on_path}")"
+    candidates+=("${resolved}")
+  fi
+
+  # Only a real Mach-O binary is bundleable — the npm PATH entry is a Node
+  # shim script that would break when copied out of its package.
+  local src=""
+  local candidate
+  # ${arr[@]+...} guard: macOS ships bash 3.2, where expanding an empty array
+  # under `set -u` is an unbound-variable error.
+  for candidate in ${candidates[@]+"${candidates[@]}"}; do
+    [[ -f "${candidate}" ]] || continue
+    if file -b "${candidate}" | grep -q "Mach-O"; then
+      src="${candidate}"
+      break
+    fi
+  done
+
+  if [[ -z "${src}" ]]; then
+    echo "[build-macos-arm64] OfficeCLI binary not found (checked OFFICECLI_BIN, npm global package, PATH)." >&2
+    echo "[build-macos-arm64] Install it ('npm install -g @officecli/officecli' or 'brew install officecli')," >&2
+    echo "[build-macos-arm64] set OFFICECLI_BIN to the binary path, or set SKIP_OFFICECLI=1 to build without it." >&2
+    exit 1
+  fi
+
+  mkdir -p "${vendor_dir}"
+  cp -f "${src}" "${vendor_dir}/officecli"
+  chmod +x "${vendor_dir}/officecli"
+
+  # arm64 macOS refuses unsigned binaries. Keep an existing valid signature
+  # (publisher or ad-hoc); only ad-hoc sign when verification fails.
+  if ! codesign --verify "${vendor_dir}/officecli" >/dev/null 2>&1; then
+    codesign --force --sign - --timestamp=none "${vendor_dir}/officecli"
+  fi
+
+  local staged_version
+  if ! staged_version="$("${vendor_dir}/officecli" --version)"; then
+    echo "[build-macos-arm64] Staged vendor/officecli failed '--version' — refusing to ship a broken binary." >&2
+    exit 1
+  fi
+  echo "[build-macos-arm64] Vendored OfficeCLI ${staged_version} from ${src}"
+
+  # Apache-2.0 redistribution notice: full upstream text when reachable,
+  # pointer notice offline.
+  local license_path="${vendor_dir}/OFFICECLI-LICENSE.txt"
+  if ! curl -fsSL --max-time 20 \
+    'https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/LICENSE' \
+    -o "${license_path}" 2>/dev/null || [[ ! -s "${license_path}" ]]; then
+    cat > "${license_path}" <<'NOTICE'
+This folder bundles OfficeCLI (officecli), copyright the iOfficeAI project,
+licensed under the Apache License, Version 2.0.
+
+  Project: https://github.com/iOfficeAI/OfficeCLI
+  License: https://www.apache.org/licenses/LICENSE-2.0
+
+OfficeCLI is redistributed unmodified as a convenience so the built-in office
+agent can create and edit Word/Excel/PowerPoint documents out of the box.
+NOTICE
+  fi
+}
+
 build_canonical_dmg() {
   local app_bundle="$1"
   local dmg_output="$2"
@@ -234,6 +324,11 @@ if [[ -n "${LATEST_APP}" ]]; then
   # 只对外层 app bundle 做非 deep ad-hoc 签名,用于生成有效的 bundle
   # 资源封装,同时保留 sidecar 现有签名和 hash。
   xattr -dr com.apple.quarantine "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" 2>/dev/null || true
+  if [[ "${SKIP_OFFICECLI:-0}" != "1" ]]; then
+    stage_officecli "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}"
+  else
+    echo "[build-macos-arm64] Skipping OfficeCLI bundling (SKIP_OFFICECLI=1)"
+  fi
   codesign --force --sign - --timestamp=none "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}"
   rm -f "${CANONICAL_OUTPUT_DIR}/"*.dmg
   build_canonical_dmg \
