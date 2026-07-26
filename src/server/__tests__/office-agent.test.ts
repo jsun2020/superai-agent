@@ -37,4 +37,41 @@ describe('OFFICE_AGENT definition', () => {
       expect(prompt).toContain(expected)
     }
   })
+
+  test('system prompt prefers OfficeCLI with detection, core commands, and fallback', () => {
+    const prompt = OFFICE_AGENT.getSystemPrompt({
+      toolUseContext: { options: {} },
+    } as Parameters<typeof OFFICE_AGENT.getSystemPrompt>[0])
+    for (const expected of [
+      'officecli --version',
+      'officecli load_skill',
+      'view', // rendering/read commands
+      'screenshot',
+      'batch',
+      'merge',
+      '--json',
+      'fall back', // graceful degradation to the Python toolbelt
+      'npm install -g @officecli/officecli',
+    ]) {
+      expect(prompt).toContain(expected)
+    }
+  })
+
+  test('system prompt includes workplace deliverable recipes', () => {
+    const prompt = OFFICE_AGENT.getSystemPrompt({
+      toolUseContext: { options: {} },
+    } as Parameters<typeof OFFICE_AGENT.getSystemPrompt>[0])
+    const lowered = prompt.toLowerCase()
+    for (const expected of ['deck', 'template', 'analysis', 'organiz']) {
+      expect(lowered).toContain(expected)
+    }
+  })
+
+  test('system prompt demands render-based verification for formatted documents', () => {
+    const prompt = OFFICE_AGENT.getSystemPrompt({
+      toolUseContext: { options: {} },
+    } as Parameters<typeof OFFICE_AGENT.getSystemPrompt>[0])
+    expect(prompt.toLowerCase()).toContain('render')
+    expect(prompt.toLowerCase()).toContain('extraction')
+  })
 })
