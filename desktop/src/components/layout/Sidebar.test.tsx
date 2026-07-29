@@ -29,6 +29,11 @@ vi.mock('../../i18n', () => ({
       'sidebar.confirmDelete': 'Delete this session? This cannot be undone.',
       'sidebar.collapse': 'Collapse sidebar',
       'sidebar.expand': 'Expand sidebar',
+      'mode.work': 'Work',
+      'mode.code': 'Code',
+      'mode.workDescription': 'For getting work done',
+      'mode.codeDescription': 'For developers',
+      'mode.switcherLabel': 'Switch between Work and Code mode',
     }
 
     return translations[key] ?? key
@@ -102,6 +107,24 @@ describe('Sidebar', () => {
     ])
     expect(useTabStore.getState().activeTabId).toBe('session-new-1')
     expect(screen.getByRole('complementary')).not.toHaveAttribute('data-tauri-drag-region')
+  })
+
+  it('does not nest the mode switcher inside a clipping .sidebar-copy wrapper', () => {
+    // .sidebar-copy sets `overflow: hidden` for the collapse animation. The mode
+    // dropdown is absolutely positioned below its trigger, so any such ancestor
+    // clips the whole menu away — it renders but cannot be seen or clicked.
+    // jsdom does no layout, so this structural check is the only unit-level guard.
+    render(<Sidebar />)
+
+    const trigger = screen.getByTestId('mode-switcher-trigger')
+    const clipping: string[] = []
+    for (let el = trigger.parentElement; el && el.tagName !== 'BODY'; el = el.parentElement) {
+      if (el.classList.contains('sidebar-copy') || el.style.overflow === 'hidden') {
+        clipping.push(el.className || el.tagName)
+      }
+    }
+
+    expect(clipping).toEqual([])
   })
 
   it('shows a toast when session creation fails', async () => {

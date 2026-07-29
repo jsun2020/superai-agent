@@ -136,9 +136,9 @@ export function Sidebar() {
           <div className={`flex min-w-0 items-center ${sidebarOpen ? 'gap-2.5' : 'justify-center'}`}>
             <img src="/app-icon.png" alt="" className="h-8 w-8 flex-shrink-0" />
             {sidebarOpen ? (
-              <span className="sidebar-copy sidebar-copy--visible">
-                <ModeSwitcher />
-              </span>
+              // No .sidebar-copy wrapper here: it sets `overflow: hidden` for the
+              // collapse animation, which clips the switcher's dropdown menu away.
+              <ModeSwitcher />
             ) : (
               <span
                 className="sidebar-copy sidebar-copy--hidden text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]"
