@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import type { ThemeMode, ResolvedTheme } from '../types/settings'
+import type { AppMode, ThemeMode, ResolvedTheme } from '../types/settings'
 
 const THEME_STORAGE_KEY = 'superai-agent-theme'
+const APP_MODE_STORAGE_KEY = 'superai-agent-app-mode'
 
 function getStoredTheme(): ThemeMode {
   try {
@@ -9,6 +10,14 @@ function getStoredTheme(): ThemeMode {
     if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
   } catch { /* localStorage unavailable */ }
   return 'system'
+}
+
+export function getStoredAppMode(): AppMode {
+  try {
+    const stored = localStorage.getItem(APP_MODE_STORAGE_KEY)
+    if (stored === 'work' || stored === 'code') return stored
+  } catch { /* localStorage unavailable */ }
+  return 'code'
 }
 
 function getSystemTheme(): ResolvedTheme {
@@ -71,6 +80,7 @@ type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'
 
 type UIStore = {
   theme: ThemeMode
+  appMode: AppMode
   sidebarOpen: boolean
   activeView: ActiveView
   pendingSettingsTab: SettingsTab | null
@@ -79,6 +89,7 @@ type UIStore = {
   toasts: Toast[]
 
   setTheme: (theme: ThemeMode) => void
+  setAppMode: (mode: AppMode) => void
   toggleTheme: () => void
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
@@ -95,6 +106,7 @@ let toastCounter = 0
 
 export const useUIStore = create<UIStore>((set) => ({
   theme: getStoredTheme(),
+  appMode: getStoredAppMode(),
   sidebarOpen: true,
   activeView: 'code',
   pendingSettingsTab: null,
@@ -106,6 +118,11 @@ export const useUIStore = create<UIStore>((set) => ({
     applyTheme(theme)
     try { localStorage.setItem(THEME_STORAGE_KEY, theme) } catch { /* noop */ }
     set({ theme })
+  },
+
+  setAppMode: (mode) => {
+    try { localStorage.setItem(APP_MODE_STORAGE_KEY, mode) } catch { /* noop */ }
+    set({ appMode: mode })
   },
 
   toggleTheme: () => {

@@ -603,6 +603,30 @@ describe('SessionService', () => {
     expect(launchInfo!.workDir).toBe(os.tmpdir())
     expect(launchInfo!.transcriptMessageCount).toBe(0)
     expect(launchInfo!.customTitle).toBeNull()
+    expect(launchInfo!.mode).toBeNull()
+  })
+
+  it('should round-trip the work mode through session-meta', async () => {
+    const { sessionId } = await service.createSession(os.tmpdir(), 'work')
+
+    const launchInfo = await service.getSessionLaunchInfo(sessionId)
+    expect(launchInfo!.mode).toBe('work')
+  })
+
+  it('should keep the mode when metadata is re-appended after placeholder replacement', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    // Simulate a CLI-recreated transcript (no mode), then the server's re-append.
+    await writeSessionFile('-tmp-project', sessionId, [
+      makeSnapshotEntry(),
+      { type: 'session-meta', isMeta: true, workDir: '/tmp/project', timestamp: '2026-01-01T00:00:00.000Z' },
+    ])
+    await service.appendSessionMetadata(sessionId, { workDir: '/tmp/project', mode: 'work' })
+
+    const launchInfo = await service.getSessionLaunchInfo(sessionId)
+    expect(launchInfo!.mode).toBe('work')
+    // Invalid/absent stamps must not leak through.
+    const detail = await service.getSession(sessionId)
+    expect(detail).not.toBeNull()
   })
 
   it('should detect resumable launch info for transcript sessions', async () => {

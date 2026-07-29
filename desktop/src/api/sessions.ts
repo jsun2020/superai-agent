@@ -47,8 +47,11 @@ export const sessionsApi = {
     return api.get<MessagesResponse>(`/api/sessions/${sessionId}/messages`)
   },
 
-  create(workDir?: string) {
-    return api.post<CreateSessionResponse>('/api/sessions', workDir ? { workDir } : {})
+  create(workDir?: string, mode?: 'work' | 'code') {
+    return api.post<CreateSessionResponse>('/api/sessions', {
+      ...(workDir ? { workDir } : {}),
+      ...(mode ? { mode } : {}),
+    })
   },
 
   delete(sessionId: string) {

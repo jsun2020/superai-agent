@@ -527,9 +527,21 @@ export const en = {
   'settings.general.proxyNtlmHint': 'Your proxy requires Windows-domain authentication ({schemes}), which the built-in proxy cannot speak. Install a local NTLM bridge (e.g. px or cntlm), point it at this proxy, then in this dialog use Address=127.0.0.1, Port=<bridge port>, and leave Account/Password empty.',
   'settings.general.proxyAuthRequiredHint': 'The proxy returned 407 (auth required) but did not advertise NTLM/Negotiate. Double-check Account and Password.',
 
+  // ─── Mode Switcher (Work / Code) ─────────────────────────
+  'mode.work': 'Work',
+  'mode.code': 'Code',
+  'mode.workDescription': 'For getting work done — documents, spreadsheets, slides, and everyday tasks',
+  'mode.codeDescription': 'For developers — build, debug, and ship software',
+  'mode.switcherLabel': 'Switch between Work and Code mode',
+
   // ─── Empty Session ──────────────────────────────────────
   'empty.title': 'New session',
   'empty.subtitle': 'Start a fresh coding session. Claude is ready to help you build, debug, and architect your project.',
+  'empty.subtitleWork': 'Your AI office assistant. Make slides, analyze spreadsheets, fill documents, and organize files — just describe the task.',
+  'empty.suggestionDeck': 'Make a PowerPoint for a project update',
+  'empty.suggestionExcel': 'Analyze an Excel file and summarize key findings',
+  'empty.suggestionDocFill': 'Fill a Word template with my data',
+  'empty.suggestionOrganize': 'Organize and rename the files in a folder',
   'empty.placeholder': 'Ask anything...',
   'empty.addFiles': 'Add files or photos',
   'empty.slashCommands': 'Slash commands',

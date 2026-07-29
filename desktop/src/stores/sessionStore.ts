@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { sessionsApi } from '../api/sessions'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useUIStore } from './uiStore'
 import type { SessionListItem } from '../types/session'
 
 type SessionStore = {
@@ -49,7 +50,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   createSession: async (workDir?: string) => {
-    const { sessionId: id } = await sessionsApi.create(workDir || undefined)
+    // New sessions inherit the app-level Work/Code mode chosen in the sidebar.
+    const mode = useUIStore.getState().appMode
+    const { sessionId: id } = await sessionsApi.create(workDir || undefined, mode)
     const now = new Date().toISOString()
     const optimisticSession: SessionListItem = {
       id,

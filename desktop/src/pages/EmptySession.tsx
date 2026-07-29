@@ -66,6 +66,7 @@ export function EmptySession() {
   const connectToSession = useChatStore((state) => state.connectToSession)
   const setActiveView = useUIStore((state) => state.setActiveView)
   const addToast = useUIStore((state) => state.addToast)
+  const appMode = useUIStore((state) => state.appMode)
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -494,8 +495,25 @@ export function EmptySession() {
             {t('empty.title')}
           </h1>
           <p className="mx-auto max-w-xs text-[var(--color-text-secondary)]" style={{ fontFamily: 'var(--font-body)' }}>
-            {t('empty.subtitle')}
+            {appMode === 'work' ? t('empty.subtitleWork') : t('empty.subtitle')}
           </p>
+          {appMode === 'work' && (
+            <div className="mt-5 flex max-w-md flex-wrap justify-center gap-2" data-testid="work-mode-suggestions">
+              {(['empty.suggestionDeck', 'empty.suggestionExcel', 'empty.suggestionDocFill', 'empty.suggestionOrganize'] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setInput(t(key))
+                    requestAnimationFrame(() => textareaRef.current?.focus())
+                  }}
+                  className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-focus)] hover:text-[var(--color-text-primary)]"
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -21,6 +21,7 @@ import {
   executeSessionRewind,
   previewSessionRewind,
 } from '../services/sessionRewindService.js'
+import { isSessionMode } from '../services/workMode.js'
 
 export async function handleSessionsApi(
   req: Request,
@@ -163,9 +164,9 @@ async function getSessionMessages(sessionId: string): Promise<Response> {
 }
 
 async function createSession(req: Request): Promise<Response> {
-  let body: { workDir?: string }
+  let body: { workDir?: string; mode?: string }
   try {
-    body = (await req.json()) as { workDir?: string }
+    body = (await req.json()) as { workDir?: string; mode?: string }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
@@ -174,7 +175,11 @@ async function createSession(req: Request): Promise<Response> {
     throw ApiError.badRequest('workDir must be a string')
   }
 
-  const result = await sessionService.createSession(body.workDir)
+  if (body.mode !== undefined && !isSessionMode(body.mode)) {
+    throw ApiError.badRequest("mode must be 'work' or 'code'")
+  }
+
+  const result = await sessionService.createSession(body.workDir, body.mode)
   return Response.json(result, { status: 201 })
 }
 

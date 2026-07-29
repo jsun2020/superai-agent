@@ -15,6 +15,7 @@ vi.mock('../api/sessions', () => ({
 }))
 
 import { useSessionStore } from './sessionStore'
+import { useUIStore } from './uiStore'
 
 const initialState = useSessionStore.getState()
 
@@ -59,5 +60,18 @@ describe('sessionStore', () => {
       workDirExists: true,
     })
     expect(listMock).toHaveBeenCalledOnce()
+  })
+
+  it('sends the app-level Work/Code mode when creating a session', async () => {
+    createMock.mockResolvedValue({ sessionId: 'session-mode-1' })
+    listMock.mockResolvedValue({ sessions: [] })
+
+    useUIStore.setState({ appMode: 'work' })
+    await useSessionStore.getState().createSession('D:/workspace/docs')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'work')
+
+    useUIStore.setState({ appMode: 'code' })
+    await useSessionStore.getState().createSession('D:/workspace/docs')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'code')
   })
 })

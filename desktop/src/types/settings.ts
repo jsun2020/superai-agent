@@ -5,6 +5,8 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermiss
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max'
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
+// Product mode: 'work' = general office users, 'code' = developers (default).
+export type AppMode = 'work' | 'code'
 
 export type ModelInfo = {
   id: string

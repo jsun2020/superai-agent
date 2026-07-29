@@ -530,8 +530,19 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.proxyAuthRequiredHint': '代理返回 407（需要认证），但未提示 NTLM/Negotiate。请检查账号与密码是否正确。',
 
   // ─── Empty Session ──────────────────────────────────────
+  'mode.work': 'Work',
+  'mode.code': 'Code',
+  'mode.workDescription': '搞定日常工作 — 文档、表格、PPT 和各种办公任务',
+  'mode.codeDescription': '面向开发者 — 构建、调试和交付软件',
+  'mode.switcherLabel': '在 Work 与 Code 模式之间切换',
+
   'empty.title': '新建会话',
   'empty.subtitle': '开始一个新的编码会话。Claude 已准备好帮你构建、调试和架构你的项目。',
+  'empty.subtitleWork': '你的 AI 办公助手。做 PPT、分析表格、填写文档、整理文件 — 描述任务即可。',
+  'empty.suggestionDeck': '帮我做一份项目汇报 PPT',
+  'empty.suggestionExcel': '分析一个 Excel 表格并总结要点',
+  'empty.suggestionDocFill': '用我的数据填写 Word 模板',
+  'empty.suggestionOrganize': '整理并重命名文件夹里的文件',
   'empty.placeholder': '随便问点什么...',
   'empty.addFiles': '添加文件或图片',
   'empty.slashCommands': '斜杠命令',

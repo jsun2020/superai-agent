@@ -15,6 +15,7 @@ import {
   isOpenAICodexOfficialProviderId,
 } from './providerService.js'
 import { sessionService } from './sessionService.js'
+import { buildModeCliArgs, isSessionMode } from './workMode.js'
 import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
@@ -55,6 +56,8 @@ type SessionStartOptions = {
   model?: string
   effort?: string
   providerId?: string | null
+  /** Work/Code mode resolved from the session's meta entry, not from the client. */
+  mode?: string | null
 }
 
 const DEFAULT_CODEX_EXEC_TIMEOUT_MS = 5 * 60_000
@@ -144,6 +147,7 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
+      ...buildModeCliArgs(options?.mode),
     ])
   }
 
@@ -159,6 +163,12 @@ export class ConversationService {
     const shouldResume = !!launchInfo && launchInfo.transcriptMessageCount > 0
     const shouldReplacePlaceholder =
       !!launchInfo && launchInfo.transcriptMessageCount === 0
+    // The Work/Code mode lives in the session file, not in client options —
+    // resolve it here so resumes and reconnects keep the mode chosen at creation.
+    const effectiveOptions: SessionStartOptions = {
+      ...options,
+      mode: launchInfo?.mode ?? null,
+    }
 
     if (shouldReplacePlaceholder) {
       await sessionService.deleteSessionFile(sessionId)
@@ -180,7 +190,7 @@ export class ConversationService {
       sessionId,
       sdkUrl,
       shouldResume,
-      options,
+      effectiveOptions,
     )
 
     console.log(
@@ -267,6 +277,7 @@ export class ConversationService {
       await sessionService.appendSessionMetadata(sessionId, {
         workDir,
         customTitle: launchInfo?.customTitle ?? null,
+        mode: launchInfo?.mode ?? null,
       })
     }
 
@@ -276,7 +287,11 @@ export class ConversationService {
   private async startCodexSession(
     sessionId: string,
     workDir: string,
-    launchInfo: { customTitle?: string | null; transcriptMessageCount?: number } | null,
+    launchInfo: {
+      customTitle?: string | null
+      transcriptMessageCount?: number
+      mode?: string | null
+    } | null,
   ): Promise<void> {
     const codexCommand = this.resolveCodexCommand()
     if (!codexCommand) {
@@ -311,6 +326,7 @@ export class ConversationService {
       await sessionService.appendSessionMetadata(sessionId, {
         workDir,
         customTitle: launchInfo.customTitle ?? null,
+        mode: isSessionMode(launchInfo.mode) ? launchInfo.mode : null,
       })
     }
 

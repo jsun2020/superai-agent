@@ -11,6 +11,7 @@ import * as os from 'node:os'
 import { ApiError } from '../middleware/errorHandler.js'
 import { sanitizePath as sanitizePortablePath } from '../../utils/sessionStoragePortable.js'
 import type { FileHistorySnapshot } from '../../utils/fileHistory.js'
+import { isSessionMode, type SessionMode } from './workMode.js'
 
 // ============================================================================
 // Types
@@ -37,6 +38,7 @@ export type SessionLaunchInfo = {
   workDir: string
   transcriptMessageCount: number
   customTitle: string | null
+  mode: SessionMode | null
 }
 
 export type TrimSessionResult = {
@@ -629,7 +631,10 @@ export class SessionService {
   /**
    * Create a new session file for the given working directory.
    */
-  async createSession(workDir?: string): Promise<{ sessionId: string }> {
+  async createSession(
+    workDir?: string,
+    mode?: SessionMode,
+  ): Promise<{ sessionId: string }> {
     // Default to user home directory when no workDir specified
     const resolvedWorkDir = workDir || os.homedir()
 
@@ -675,11 +680,12 @@ export class SessionService {
       isSnapshotUpdate: false,
     }
 
-    // Store actual workDir for later retrieval
+    // Store actual workDir (and Work/Code mode, when chosen) for later retrieval
     const metaEntry = {
       type: 'session-meta',
       isMeta: true,
       workDir: absWorkDir,
+      ...(mode ? { mode } : {}),
       timestamp: now,
     }
 
@@ -759,11 +765,18 @@ export class SessionService {
     const entries = await this.readJsonlFile(found.filePath)
     const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || process.cwd()
     let customTitle: string | null = null
+    let mode: SessionMode | null = null
     let transcriptMessageCount = 0
 
     for (const entry of entries) {
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
         customTitle = entry.customTitle
+      }
+      if (entry.type === 'session-meta') {
+        const entryMode = (entry as Record<string, unknown>).mode
+        if (isSessionMode(entryMode)) {
+          mode = entryMode
+        }
       }
       if (
         !entry.isMeta &&
@@ -780,6 +793,7 @@ export class SessionService {
       workDir,
       transcriptMessageCount,
       customTitle,
+      mode,
     }
   }
 
@@ -791,7 +805,7 @@ export class SessionService {
 
   async appendSessionMetadata(
     sessionId: string,
-    metadata: { workDir: string; customTitle?: string | null }
+    metadata: { workDir: string; customTitle?: string | null; mode?: SessionMode | null }
   ): Promise<void> {
     const found = await this.findSessionFile(sessionId)
     if (!found) return
@@ -800,6 +814,7 @@ export class SessionService {
       type: 'session-meta',
       isMeta: true,
       workDir: metadata.workDir,
+      ...(metadata.mode ? { mode: metadata.mode } : {}),
       timestamp: new Date().toISOString(),
     })
 

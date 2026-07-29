@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation } from '../../i18n'
 import { ProjectFilter } from './ProjectFilter'
+import { ModeSwitcher } from './ModeSwitcher'
 import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { SessionListItem } from '../../types/session'
 import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tabStore'
@@ -134,12 +135,18 @@ export function Sidebar() {
         <div className={`flex ${sidebarOpen ? 'items-center justify-between gap-3' : 'flex-col items-center gap-2'}`}>
           <div className={`flex min-w-0 items-center ${sidebarOpen ? 'gap-2.5' : 'justify-center'}`}>
             <img src="/app-icon.png" alt="" className="h-8 w-8 flex-shrink-0" />
-            <span
-              className={`sidebar-copy ${sidebarOpen ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]`}
-              style={{ fontFamily: 'var(--font-headline)' }}
-            >
-              SuperAI <span className="text-[var(--color-primary-container)]">Agent</span>
-            </span>
+            {sidebarOpen ? (
+              <span className="sidebar-copy sidebar-copy--visible">
+                <ModeSwitcher />
+              </span>
+            ) : (
+              <span
+                className="sidebar-copy sidebar-copy--hidden text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]"
+                style={{ fontFamily: 'var(--font-headline)' }}
+              >
+                SuperAI <span className="text-[var(--color-primary-container)]">Agent</span>
+              </span>
+            )}
           </div>
           <div className={`flex items-center ${sidebarOpen ? 'gap-1.5' : 'flex-col gap-2'}`}>
             <a

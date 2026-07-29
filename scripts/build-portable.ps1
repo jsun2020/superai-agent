@@ -174,6 +174,10 @@ if (-not $SkipOfficeCLI) {
   Copy-Item -LiteralPath $officecliSrc -Destination (Join-Path $vendorDir 'officecli.exe')
   $officecliVersion = & (Join-Path $vendorDir 'officecli.exe') --version
   if ($LASTEXITCODE -ne 0) { throw "Staged vendor\officecli.exe failed 'officecli --version' (exit $LASTEXITCODE)" }
+  # Running officecli triggers its self-updater, which drops a full-size
+  # officecli.exe.update next to the binary — 32MB of junk in the zip if left.
+  Get-ChildItem -LiteralPath $vendorDir -Filter '*.update' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
   Write-Step "Vendored OfficeCLI $officecliVersion from $officecliSrc"
 
   # Apache-2.0 redistribution notice: prefer the full upstream license text,
