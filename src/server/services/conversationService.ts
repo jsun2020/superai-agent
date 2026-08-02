@@ -15,7 +15,7 @@ import {
   isOpenAICodexOfficialProviderId,
 } from './providerService.js'
 import { sessionService } from './sessionService.js'
-import { buildModeCliArgs, isSessionMode } from './workMode.js'
+import { buildModeCliArgs, isSessionMode, isSessionRole } from './workMode.js'
 import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
@@ -58,6 +58,8 @@ type SessionStartOptions = {
   providerId?: string | null
   /** Work/Code mode resolved from the session's meta entry, not from the client. */
   mode?: string | null
+  /** Workplace role resolved from the same meta entry. Ignored outside Work mode. */
+  role?: string | null
 }
 
 const DEFAULT_CODEX_EXEC_TIMEOUT_MS = 5 * 60_000
@@ -147,7 +149,7 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-      ...buildModeCliArgs(options?.mode),
+      ...buildModeCliArgs(options?.mode, options?.role),
     ])
   }
 
@@ -163,11 +165,13 @@ export class ConversationService {
     const shouldResume = !!launchInfo && launchInfo.transcriptMessageCount > 0
     const shouldReplacePlaceholder =
       !!launchInfo && launchInfo.transcriptMessageCount === 0
-    // The Work/Code mode lives in the session file, not in client options —
-    // resolve it here so resumes and reconnects keep the mode chosen at creation.
+    // The Work/Code mode and workplace role live in the session file, not in
+    // client options — resolve them here so resumes and reconnects keep what
+    // was chosen at creation.
     const effectiveOptions: SessionStartOptions = {
       ...options,
       mode: launchInfo?.mode ?? null,
+      role: launchInfo?.role ?? null,
     }
 
     if (shouldReplacePlaceholder) {
@@ -278,6 +282,7 @@ export class ConversationService {
         workDir,
         customTitle: launchInfo?.customTitle ?? null,
         mode: launchInfo?.mode ?? null,
+        role: launchInfo?.role ?? null,
       })
     }
 
@@ -291,6 +296,7 @@ export class ConversationService {
       customTitle?: string | null
       transcriptMessageCount?: number
       mode?: string | null
+      role?: string | null
     } | null,
   ): Promise<void> {
     const codexCommand = this.resolveCodexCommand()
@@ -327,6 +333,7 @@ export class ConversationService {
         workDir,
         customTitle: launchInfo.customTitle ?? null,
         mode: isSessionMode(launchInfo.mode) ? launchInfo.mode : null,
+        role: isSessionRole(launchInfo.role) ? launchInfo.role : null,
       })
     }
 

@@ -7,6 +7,11 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 // Product mode: 'work' = general office users, 'code' = developers (default).
 export type AppMode = 'work' | 'code'
+// Optional workplace role within Work mode, chosen per session on the new
+// session screen. Mirrors SessionRole in src/server/services/workMode.ts.
+// No 'office' role: no role at all is the document experience.
+export type SessionRole = 'assistant' | 'sales' | 'analyst'
+export const SESSION_ROLES: readonly SessionRole[] = ['assistant', 'sales', 'analyst'] as const
 
 export type ModelInfo = {
   id: string

@@ -534,6 +534,23 @@ export const en = {
   'mode.codeDescription': 'For developers — build, debug, and ship software',
   'mode.switcherLabel': 'Switch between Work and Code mode',
 
+  // ─── Work Roles ─────────────────────────────────────────
+  'role.assistant': 'Assistant',
+  'role.assistantTagline': 'Triages the inbox, owns the calendar, and keeps your day on rails.',
+  'role.assistantWorksWith': 'Email · Calendar · Meeting notes',
+  'role.assistantExample1': 'Triage my inbox and draft replies to anything urgent',
+  'role.assistantExample2': 'Turn these meeting notes into action items with owners',
+  'role.sales': 'Sales',
+  'role.salesTagline': 'Researches accounts, preps every meeting, drafts follow-ups that sound like you.',
+  'role.salesWorksWith': 'CRM · Email · Account research',
+  'role.salesExample1': 'Research this account and build a one-page meeting brief',
+  'role.salesExample2': 'Draft a follow-up email from these call notes',
+  'role.analyst': 'Analyst',
+  'role.analystTagline': 'Turns spreadsheets into a finding, and repeats it the same way every week.',
+  'role.analystWorksWith': 'Excel · CSV · Reports',
+  'role.analystExample1': 'Analyze this spreadsheet and tell me what changed',
+  'role.analystExample2': 'Build a weekly report from this data with charts',
+
   // ─── Empty Session ──────────────────────────────────────
   'empty.title': 'New session',
   'empty.subtitle': 'Start a fresh coding session. Claude is ready to help you build, debug, and architect your project.',
@@ -542,6 +559,19 @@ export const en = {
   'empty.suggestionExcel': 'Analyze an Excel file and summarize key findings',
   'empty.suggestionDocFill': 'Fill a Word template with my data',
   'empty.suggestionOrganize': 'Organize and rename the files in a folder',
+  'empty.rolePickerLabel': 'Pick a role, or just describe your task',
+
+  // ─── Scheduled Work Templates ───────────────────────────
+  'taskTemplate.pickerLabel': 'Start from a template',
+  'taskTemplate.morningBriefName': 'Morning brief',
+  'taskTemplate.morningBriefDesc': 'A one-screen summary of the day, every weekday morning',
+  'taskTemplate.morningBriefPrompt': 'Prepare my morning brief for today. Structure it as: what needs a decision today, what is due, today\'s meetings with short prep notes, anything that slipped from yesterday, and one line on anything else worth knowing. Keep the whole thing under one screen. This is a briefing only — do not send any message or change any calendar entry.',
+  'taskTemplate.weeklyReportName': 'Weekly report',
+  'taskTemplate.weeklyReportDesc': 'The same report, the same shape, every Friday afternoon',
+  'taskTemplate.weeklyReportPrompt': 'Build this week\'s report. Lead with the findings, then the evidence. State the data source, the period covered and the as-of date at the top. Compare against last week and against the target, and say how many rows you had to drop and why. Keep the sections in the same order as last week so the two can be compared at a glance. Write the output to a NEW file, leave the source data untouched, and report the absolute path.',
+  'taskTemplate.inboxTriageName': 'Inbox triage',
+  'taskTemplate.inboxTriageDesc': 'Sort the inbox and draft the urgent replies, ready for approval',
+  'taskTemplate.inboxTriagePrompt': 'Triage my inbox. Sort every message into ACT NOW (needs me today), ACT LATER (needs me, with the deadline) and FYI (one-line summary). For each ACT NOW item, draft a reply in my voice. Do NOT send anything — present the drafts as a numbered list I can approve, edit or drop one by one. Flag anything that looks like phishing or an unusual payment request instead of acting on it.',
   'empty.placeholder': 'Ask anything...',
   'empty.addFiles': 'Add files or photos',
   'empty.slashCommands': 'Slash commands',

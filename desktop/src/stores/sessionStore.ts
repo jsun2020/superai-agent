@@ -3,6 +3,7 @@ import { sessionsApi } from '../api/sessions'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { useUIStore } from './uiStore'
 import type { SessionListItem } from '../types/session'
+import type { SessionRole } from '../types/settings'
 
 type SessionStore = {
   sessions: SessionListItem[]
@@ -13,7 +14,7 @@ type SessionStore = {
   availableProjects: string[]
 
   fetchSessions: (project?: string) => Promise<void>
-  createSession: (workDir?: string) => Promise<string>
+  createSession: (workDir?: string, role?: SessionRole) => Promise<string>
   deleteSession: (id: string) => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   updateSessionTitle: (id: string, title: string) => void
@@ -49,10 +50,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  createSession: async (workDir?: string) => {
+  createSession: async (workDir?: string, role?: SessionRole) => {
     // New sessions inherit the app-level Work/Code mode chosen in the sidebar.
+    // The role is per-session and only meaningful in Work mode — the server
+    // ignores it otherwise, but don't stamp one from a Code-mode session.
     const mode = useUIStore.getState().appMode
-    const { sessionId: id } = await sessionsApi.create(workDir || undefined, mode)
+    const effectiveRole = mode === 'work' ? role : undefined
+    const { sessionId: id } = await sessionsApi.create(workDir || undefined, mode, effectiveRole)
     const now = new Date().toISOString()
     const optimisticSession: SessionListItem = {
       id,

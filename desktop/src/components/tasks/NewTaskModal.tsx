@@ -7,7 +7,8 @@ import { Input } from '../shared/Input'
 import { Button } from '../shared/Button'
 import { PromptEditor } from './PromptEditor'
 import { DayOfWeekPicker } from './DayOfWeekPicker'
-import { useTranslation } from '../../i18n'
+import { useTranslation, type TranslationKey } from '../../i18n'
+import { useUIStore } from '../../stores/uiStore'
 import { describeCron, isValidCron, parseCron, type FrequencyKey } from '../../lib/cronDescribe'
 import type { PermissionMode } from '../../types/settings'
 import type { CronTask } from '../../types/task'
@@ -17,6 +18,49 @@ type Props = {
   onClose: () => void
   editTask?: CronTask
 }
+
+/**
+ * Work-mode starting points for a scheduled task. The scheduler, the cron
+ * builder and the notification channels already exist — these only prefill the
+ * form, so a non-technical user never has to invent a prompt or a cron rule.
+ */
+type WorkTaskTemplate = {
+  id: string
+  nameKey: TranslationKey
+  descKey: TranslationKey
+  promptKey: TranslationKey
+  frequency: FrequencyKey
+  time: string
+  selectedDays?: number[]
+}
+
+export const WORK_TASK_TEMPLATES: readonly WorkTaskTemplate[] = [
+  {
+    id: 'morningBrief',
+    nameKey: 'taskTemplate.morningBriefName',
+    descKey: 'taskTemplate.morningBriefDesc',
+    promptKey: 'taskTemplate.morningBriefPrompt',
+    frequency: 'weekdays',
+    time: '08:30',
+  },
+  {
+    id: 'weeklyReport',
+    nameKey: 'taskTemplate.weeklyReportName',
+    descKey: 'taskTemplate.weeklyReportDesc',
+    promptKey: 'taskTemplate.weeklyReportPrompt',
+    frequency: 'specificDays',
+    time: '16:00',
+    selectedDays: [5], // Friday
+  },
+  {
+    id: 'inboxTriage',
+    nameKey: 'taskTemplate.inboxTriageName',
+    descKey: 'taskTemplate.inboxTriageDesc',
+    promptKey: 'taskTemplate.inboxTriagePrompt',
+    frequency: 'weekdays',
+    time: '09:00',
+  },
+] as const
 
 const MINUTE_INTERVALS = [5, 10, 15, 20, 30]
 const HOUR_INTERVALS = [1, 2, 3, 4, 6, 8, 12]
@@ -110,6 +154,19 @@ export function NewTaskModal({ open, onClose, editTask }: Props) {
 
   const showTime = ['daily', 'weekdays', 'specificDays', 'monthly'].includes(frequency)
 
+  // Templates are a Work-mode affordance only; the Code-mode modal is unchanged.
+  const appMode = useUIStore((s) => s.appMode)
+  const showTemplates = !isEdit && appMode === 'work'
+
+  const applyTemplate = (template: WorkTaskTemplate) => {
+    setName(t(template.nameKey))
+    setDescription(t(template.descKey))
+    setPrompt(t(template.promptKey))
+    setFrequency(template.frequency)
+    setTime(template.time)
+    if (template.selectedDays) setSelectedDays(template.selectedDays)
+  }
+
   const cronValue = buildCron(frequency, time, {
     minuteInterval, hourInterval, minuteOffset, selectedDays, monthDay, customCron,
   })
@@ -167,6 +224,28 @@ export function NewTaskModal({ open, onClose, editTask }: Props) {
         </>
       }
     >
+      {/* Work-mode templates */}
+      {showTemplates && (
+        <div className="mb-5" data-testid="work-task-templates">
+          <p className="mb-2 text-xs text-[var(--color-text-tertiary)]">
+            {t('taskTemplate.pickerLabel')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {WORK_TASK_TEMPLATES.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                data-testid={`task-template-${template.id}`}
+                onClick={() => applyTemplate(template)}
+                className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-focus)] hover:text-[var(--color-text-primary)]"
+              >
+                {t(template.nameKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Info banner */}
       <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface-container)] mb-5">
         <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)]">info</span>

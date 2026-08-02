@@ -68,10 +68,30 @@ describe('sessionStore', () => {
 
     useUIStore.setState({ appMode: 'work' })
     await useSessionStore.getState().createSession('D:/workspace/docs')
-    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'work')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'work', undefined)
 
     useUIStore.setState({ appMode: 'code' })
     await useSessionStore.getState().createSession('D:/workspace/docs')
-    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'code')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'code', undefined)
+  })
+
+  it('sends the chosen workplace role in Work mode', async () => {
+    createMock.mockResolvedValue({ sessionId: 'session-role-1' })
+    listMock.mockResolvedValue({ sessions: [] })
+
+    useUIStore.setState({ appMode: 'work' })
+    await useSessionStore.getState().createSession('D:/workspace/docs', 'sales')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'work', 'sales')
+  })
+
+  it('never stamps a role on a Code-mode session', async () => {
+    // A role only means something alongside mode=work. Stamping one from Code
+    // mode would put a field in the session file that nothing should honour.
+    createMock.mockResolvedValue({ sessionId: 'session-role-2' })
+    listMock.mockResolvedValue({ sessions: [] })
+
+    useUIStore.setState({ appMode: 'code' })
+    await useSessionStore.getState().createSession('D:/workspace/docs', 'sales')
+    expect(createMock).toHaveBeenLastCalledWith('D:/workspace/docs', 'code', undefined)
   })
 })

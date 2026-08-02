@@ -2,10 +2,13 @@ import { feature } from 'bun:bundle'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
+import { ANALYST_AGENT } from './built-in/analystAgent.js'
+import { ASSISTANT_AGENT } from './built-in/assistantAgent.js'
 import { CLAUDE_CODE_GUIDE_AGENT } from './built-in/claudeCodeGuideAgent.js'
 import { EXPLORE_AGENT } from './built-in/exploreAgent.js'
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import { OFFICE_AGENT } from './built-in/officeAgent.js'
+import { SALES_AGENT } from './built-in/salesAgent.js'
 import { PLAN_AGENT } from './built-in/planAgent.js'
 import { STATUSLINE_SETUP_AGENT } from './built-in/statuslineSetup.js'
 import { VERIFICATION_AGENT } from './built-in/verificationAgent.js'
@@ -46,7 +49,12 @@ export function getBuiltInAgents(): AgentDefinition[] {
   const agents: AgentDefinition[] = [
     GENERAL_PURPOSE_AGENT,
     STATUSLINE_SETUP_AGENT,
+    // Workplace roles. Available in both modes so a Code-mode user can still
+    // delegate a deck or a follow-up, but only Work mode surfaces them in the UI.
     OFFICE_AGENT,
+    ASSISTANT_AGENT,
+    SALES_AGENT,
+    ANALYST_AGENT,
   ]
 
   if (areExplorePlanAgentsEnabled()) {

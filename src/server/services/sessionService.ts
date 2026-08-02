@@ -11,7 +11,12 @@ import * as os from 'node:os'
 import { ApiError } from '../middleware/errorHandler.js'
 import { sanitizePath as sanitizePortablePath } from '../../utils/sessionStoragePortable.js'
 import type { FileHistorySnapshot } from '../../utils/fileHistory.js'
-import { isSessionMode, type SessionMode } from './workMode.js'
+import {
+  isSessionMode,
+  isSessionRole,
+  type SessionMode,
+  type SessionRole,
+} from './workMode.js'
 
 // ============================================================================
 // Types
@@ -39,6 +44,7 @@ export type SessionLaunchInfo = {
   transcriptMessageCount: number
   customTitle: string | null
   mode: SessionMode | null
+  role: SessionRole | null
 }
 
 export type TrimSessionResult = {
@@ -634,6 +640,7 @@ export class SessionService {
   async createSession(
     workDir?: string,
     mode?: SessionMode,
+    role?: SessionRole,
   ): Promise<{ sessionId: string }> {
     // Default to user home directory when no workDir specified
     const resolvedWorkDir = workDir || os.homedir()
@@ -680,12 +687,14 @@ export class SessionService {
       isSnapshotUpdate: false,
     }
 
-    // Store actual workDir (and Work/Code mode, when chosen) for later retrieval
+    // Store actual workDir (and Work/Code mode plus the workplace role, when
+    // chosen) for later retrieval
     const metaEntry = {
       type: 'session-meta',
       isMeta: true,
       workDir: absWorkDir,
       ...(mode ? { mode } : {}),
+      ...(role ? { role } : {}),
       timestamp: now,
     }
 
@@ -766,6 +775,7 @@ export class SessionService {
     const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || process.cwd()
     let customTitle: string | null = null
     let mode: SessionMode | null = null
+    let role: SessionRole | null = null
     let transcriptMessageCount = 0
 
     for (const entry of entries) {
@@ -776,6 +786,12 @@ export class SessionService {
         const entryMode = (entry as Record<string, unknown>).mode
         if (isSessionMode(entryMode)) {
           mode = entryMode
+        }
+        // NOTE: this is the session-meta workplace role, not entry.message.role
+        // (the user/assistant message role read further down).
+        const entryRole = (entry as Record<string, unknown>).role
+        if (isSessionRole(entryRole)) {
+          role = entryRole
         }
       }
       if (
@@ -794,6 +810,7 @@ export class SessionService {
       transcriptMessageCount,
       customTitle,
       mode,
+      role,
     }
   }
 
@@ -805,7 +822,12 @@ export class SessionService {
 
   async appendSessionMetadata(
     sessionId: string,
-    metadata: { workDir: string; customTitle?: string | null; mode?: SessionMode | null }
+    metadata: {
+      workDir: string
+      customTitle?: string | null
+      mode?: SessionMode | null
+      role?: SessionRole | null
+    }
   ): Promise<void> {
     const found = await this.findSessionFile(sessionId)
     if (!found) return
@@ -815,6 +837,7 @@ export class SessionService {
       isMeta: true,
       workDir: metadata.workDir,
       ...(metadata.mode ? { mode: metadata.mode } : {}),
+      ...(metadata.role ? { role: metadata.role } : {}),
       timestamp: new Date().toISOString(),
     })
 

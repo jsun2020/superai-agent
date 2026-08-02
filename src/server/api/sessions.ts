@@ -21,7 +21,11 @@ import {
   executeSessionRewind,
   previewSessionRewind,
 } from '../services/sessionRewindService.js'
-import { isSessionMode } from '../services/workMode.js'
+import {
+  isSessionMode,
+  isSessionRole,
+  SESSION_ROLES,
+} from '../services/workMode.js'
 
 export async function handleSessionsApi(
   req: Request,
@@ -164,9 +168,9 @@ async function getSessionMessages(sessionId: string): Promise<Response> {
 }
 
 async function createSession(req: Request): Promise<Response> {
-  let body: { workDir?: string; mode?: string }
+  let body: { workDir?: string; mode?: string; role?: string }
   try {
-    body = (await req.json()) as { workDir?: string; mode?: string }
+    body = (await req.json()) as { workDir?: string; mode?: string; role?: string }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
@@ -179,7 +183,17 @@ async function createSession(req: Request): Promise<Response> {
     throw ApiError.badRequest("mode must be 'work' or 'code'")
   }
 
-  const result = await sessionService.createSession(body.workDir, body.mode)
+  if (body.role !== undefined && !isSessionRole(body.role)) {
+    throw ApiError.badRequest(
+      `role must be one of: ${SESSION_ROLES.join(', ')}`,
+    )
+  }
+
+  const result = await sessionService.createSession(
+    body.workDir,
+    body.mode,
+    body.role,
+  )
   return Response.json(result, { status: 201 })
 }
 

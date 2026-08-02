@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { skillsApi } from '../api/skills'
-import { useTranslation } from '../i18n'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { useSessionStore } from '../stores/sessionStore'
 import { useChatStore } from '../stores/chatStore'
 import { useProviderStore } from '../stores/providerStore'
@@ -17,6 +17,7 @@ import { DirectoryPicker } from '../components/shared/DirectoryPicker'
 import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
 import { ModelSelector } from '../components/controls/ModelSelector'
 import { AttachmentGallery } from '../components/chat/AttachmentGallery'
+import { RoleCards, ROLE_EXAMPLE_KEYS } from '../components/chat/RoleCards'
 import { FileSearchMenu, type FileSearchMenuHandle } from '../components/chat/FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from '../components/chat/LocalSlashCommandPanel'
 import {
@@ -28,7 +29,15 @@ import {
   resolveSlashUiAction,
 } from '../components/chat/composerUtils'
 import type { AttachmentRef } from '../types/chat'
+import type { SessionRole } from '../types/settings'
 import type { SlashCommandOption } from '../components/chat/composerUtils'
+
+const DEFAULT_WORK_SUGGESTION_KEYS = [
+  'empty.suggestionDeck',
+  'empty.suggestionExcel',
+  'empty.suggestionDocFill',
+  'empty.suggestionOrganize',
+] as const
 
 type Attachment = {
   id: string
@@ -44,6 +53,7 @@ export function EmptySession() {
   const [input, setInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [workDir, setWorkDir] = useState('')
+  const [role, setRole] = useState<SessionRole | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
@@ -158,6 +168,12 @@ export function EmptySession() {
     }
   }, [workDir])
 
+  // Picking a role swaps the generic document examples for that role's own.
+  const suggestionKeys = useMemo<readonly TranslationKey[]>(
+    () => (role ? ROLE_EXAMPLE_KEYS[role] : DEFAULT_WORK_SUGGESTION_KEYS),
+    [role],
+  )
+
   const filteredCommands = useMemo(() => {
     const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
     if (!slashFilter) return source
@@ -260,7 +276,7 @@ export function EmptySession() {
           providerId: inferredProviderId,
           modelId: inferredModelId,
         }
-      const sessionId = await createSession(workDir || undefined)
+      const sessionId = await createSession(workDir || undefined, role ?? undefined)
       setActiveView('code')
       useTabStore.getState().openTab(sessionId, 'New Session')
       connectToSession(sessionId)
@@ -489,7 +505,7 @@ export function EmptySession() {
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
       <div className="flex flex-1 flex-col items-center justify-center p-8 pb-32">
-        <div className="flex max-w-md flex-col items-center text-center">
+        <div className="flex w-full max-w-2xl flex-col items-center text-center">
           <img src="/app-icon.png" alt="SuperAI Agent" className="mb-6 h-24 w-24" />
           <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>
             {t('empty.title')}
@@ -498,21 +514,24 @@ export function EmptySession() {
             {appMode === 'work' ? t('empty.subtitleWork') : t('empty.subtitle')}
           </p>
           {appMode === 'work' && (
-            <div className="mt-5 flex max-w-md flex-wrap justify-center gap-2" data-testid="work-mode-suggestions">
-              {(['empty.suggestionDeck', 'empty.suggestionExcel', 'empty.suggestionDocFill', 'empty.suggestionOrganize'] as const).map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setInput(t(key))
-                    requestAnimationFrame(() => textareaRef.current?.focus())
-                  }}
-                  className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-focus)] hover:text-[var(--color-text-primary)]"
-                >
-                  {t(key)}
-                </button>
-              ))}
-            </div>
+            <>
+              <RoleCards value={role} onChange={setRole} />
+              <div className="mt-5 flex max-w-md flex-wrap justify-center gap-2" data-testid="work-mode-suggestions">
+                {suggestionKeys.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      setInput(t(key))
+                      requestAnimationFrame(() => textareaRef.current?.focus())
+                    }}
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-focus)] hover:text-[var(--color-text-primary)]"
+                  >
+                    {t(key)}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
