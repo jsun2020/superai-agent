@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../components/shared/Button'
 import { Input } from '../components/shared/Input'
 import { Modal } from '../components/shared/Modal'
+import { ConnectorCatalog } from '../components/settings/ConnectorCatalog'
 import { useTranslation } from '../i18n'
 import { useUIStore } from '../stores/uiStore'
 import { useMcpStore } from '../stores/mcpStore'
@@ -955,6 +956,10 @@ export function McpSettings() {
         <StatCard label={t('settings.mcp.stats.connected')} value={stats.connected} icon="check_circle" />
         <StatCard label={t('settings.mcp.stats.attention')} value={stats.attention} icon="error" />
       </div>
+
+      {/* Curated one-click connectors. Shown in both modes: it changes no
+          behavior, it only spares anyone the raw stdio/args editor below. */}
+      <ConnectorCatalog cwd={currentWorkDir} />
 
       {isLoading && servers.length === 0 ? (
         <div className="flex justify-center py-16">
