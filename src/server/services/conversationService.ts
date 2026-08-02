@@ -16,6 +16,7 @@ import {
 } from './providerService.js'
 import { sessionService } from './sessionService.js'
 import { buildModeCliArgs, isSessionMode, isSessionRole } from './workMode.js'
+import { buildOutboundPolicyArgs } from './outboundPolicy.js'
 import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
@@ -150,6 +151,9 @@ export class ConversationService {
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
       ...buildModeCliArgs(options?.mode, options?.role),
+      // Work mode only. Adds a bypass-immune PreToolUse ask on outbound MCP
+      // calls; never removes or weakens an existing permission.
+      ...buildOutboundPolicyArgs(options?.mode),
     ])
   }
 
