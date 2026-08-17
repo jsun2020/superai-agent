@@ -15,6 +15,7 @@ import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
 import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
+import { ensureSuperaiHome, getSuperaiHome } from './services/superaiHome.js'
 
 function readArgValue(flag: string): string | undefined {
   const args = process.argv.slice(2)
@@ -226,7 +227,21 @@ export function startServer(port = PORT, host = HOST) {
     )
   })
 
-  console.log(`[Server] Claude Code API server running at http://${host}:${port}`)
+  // ~/.superai: the product's own editable config folder (roles, connectors,
+  // outbound policy). Seeded here so it exists — with its README — before the
+  // user ever opens Settings, and every loader also seeds lazily as a backstop.
+  try {
+    const seeded = ensureSuperaiHome()
+    if (seeded.written.length > 0) {
+      console.log(
+        `[SuperaiHome] Seeded ${seeded.written.length} file(s) into ${getSuperaiHome()}`,
+      )
+    }
+  } catch (error) {
+    console.error(`[SuperaiHome] Could not prepare ${getSuperaiHome()}:`, error)
+  }
+
+  console.log(`[Server] SuperAI Agent API server running at http://${host}:${port}`)
   return server
 }
 

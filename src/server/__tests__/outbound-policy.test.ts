@@ -9,9 +9,18 @@ import {
   buildOutboundHookCommand,
   buildOutboundPolicyArgs,
   buildOutboundPolicySettings,
+  buildOutboundToolMatcher,
+  loadOutboundVerbs,
   matchesOutboundTool,
   writeOutboundPolicy,
 } from '../services/outboundPolicy.js'
+import { getOutboundPolicyPath, getSuperaiHome } from '../services/superaiHome.js'
+import { BUILT_IN_OUTBOUND_VERBS } from '../services/workplaceDefaults.js'
+import { useTempSuperaiHome } from './fixtures/tempSuperaiHome'
+
+// The verb list is read from ~/.superai/outbound-policy.json at write time;
+// isolate it so this machine's edits cannot change what these tests see.
+const home = useTempSuperaiHome()
 
 const tmpDirs: string[] = []
 function makeTmpDir(): string {
@@ -205,5 +214,93 @@ describe('policy CLI args', () => {
     fs.writeFileSync(filePath, 'x', 'utf-8')
     expect(writeOutboundPolicy(path.join(filePath, 'nested'), 'linux')).toBeNull()
     expect(buildOutboundPolicyArgs('work', path.join(filePath, 'nested'), 'linux')).toEqual([])
+  })
+})
+
+describe('verbs from ~/.superai/outbound-policy.json', () => {
+  const quiet = <T,>(fn: () => T): { value: T; errors: string[] } => {
+    const errors: string[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => errors.push(args.map(String).join(' '))
+    try {
+      return { value: fn(), errors }
+    } finally {
+      console.error = original
+    }
+  }
+
+  test('the seeded file reproduces the built-in list exactly', () => {
+    expect(loadOutboundVerbs()).toEqual([...BUILT_IN_OUTBOUND_VERBS])
+    expect(JSON.parse(fs.readFileSync(getOutboundPolicyPath(), 'utf-8'))).toEqual({
+      verbs: [...BUILT_IN_OUTBOUND_VERBS],
+    })
+  })
+
+  test('an added verb starts prompting; a removed one stops', () => {
+    fs.writeFileSync(
+      getOutboundPolicyPath(),
+      JSON.stringify({ verbs: ['send', 'approve'] }),
+      'utf-8',
+    )
+    const verbs = loadOutboundVerbs()
+    expect(verbs).toEqual(['send', 'approve'])
+    expect(matchesOutboundTool('mcp__crm__approve_deal', verbs)).toBe(true)
+    // 'create' is no longer in the list, so it no longer prompts.
+    expect(matchesOutboundTool('mcp__crm__create_deal', verbs)).toBe(false)
+
+    // ...and the written policy carries the edited matcher, not the default.
+    const dir = makeTmpDir()
+    const settingsPath = writeOutboundPolicy(dir, 'linux')!
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+    expect(settings.hooks.PreToolUse[0].matcher).toBe(buildOutboundToolMatcher(['send', 'approve']))
+    expect(settings.hooks.PreToolUse[0].matcher).not.toBe(OUTBOUND_TOOL_MATCHER)
+  })
+
+  test('a malformed file falls back to the built-ins and says so', () => {
+    fs.writeFileSync(getOutboundPolicyPath(), '{ nope', 'utf-8')
+    const r1 = quiet(() => loadOutboundVerbs())
+    expect(r1.value).toEqual([...BUILT_IN_OUTBOUND_VERBS])
+    expect(r1.errors.some((e) => e.includes('not valid JSON'))).toBe(true)
+
+    fs.writeFileSync(getOutboundPolicyPath(), JSON.stringify({ verbs: [] }), 'utf-8')
+    const r2 = quiet(() => loadOutboundVerbs())
+    expect(r2.value).toEqual([...BUILT_IN_OUTBOUND_VERBS])
+    expect(r2.errors.some((e) => e.includes('non-empty'))).toBe(true)
+  })
+
+  test('a verb that is not a plain word is dropped, never spliced into the regex', () => {
+    // A verb becomes part of a regex that decides whether a human is asked.
+    // "send|.*" would match everything; ")(" would throw at match time.
+    fs.writeFileSync(
+      getOutboundPolicyPath(),
+      JSON.stringify({ verbs: ['send', 'send|.*', ')(', 'Delete', 42, 'publish'] }),
+      'utf-8',
+    )
+    const { value, errors } = quiet(() => loadOutboundVerbs())
+    expect(value).toEqual(['send', 'publish'])
+    expect(errors.some((e) => e.includes('invalid verbs'))).toBe(true)
+    // The resulting matcher must still be a valid regex.
+    expect(() => new RegExp(buildOutboundToolMatcher(value))).not.toThrow()
+  })
+
+  test('a missing file is silent (the seed simply has not run) and uses the built-ins', () => {
+    loadOutboundVerbs() // seeds
+    fs.rmSync(getOutboundPolicyPath())
+    const { value, errors } = quiet(() => loadOutboundVerbs())
+    expect(value).toEqual([...BUILT_IN_OUTBOUND_VERBS])
+    expect(errors).toEqual([])
+  })
+
+  test('generated hook files live under ~/.superai/.runtime, not beside user config', () => {
+    const args = buildOutboundPolicyArgs('work', undefined, 'linux')
+    expect(args[1]!.startsWith(path.join(getSuperaiHome(), '.runtime'))).toBe(true)
+    expect(args[1]!.startsWith(home.dir)).toBe(true)
+  })
+})
+
+describe('outbound-policy.json as Windows editors write it', () => {
+  test('a BOM and CRLF do not silently disable an edited policy', () => {
+    fs.writeFileSync(getOutboundPolicyPath(), '\uFEFF{\r\n  "verbs": ["send", "approve"]\r\n}\r\n', 'utf-8')
+    expect(loadOutboundVerbs()).toEqual(['send', 'approve'])
   })
 })

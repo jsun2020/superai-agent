@@ -1,43 +1,81 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '../shared/Button'
 import { Input } from '../shared/Input'
 import { Modal } from '../shared/Modal'
+import { workApi } from '../../api/work'
 import { useTranslation } from '../../i18n'
+import { pickLocalized } from '../../lib/localized'
 import { useMcpStore } from '../../stores/mcpStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
-import {
-  CONNECTOR_CATALOG,
-  initialConnectorValues,
-  isConnectorFormComplete,
-  type ConnectorDefinition,
-  type ConnectorFieldValue,
-} from '../../constants/connectorCatalog'
+import { useWorkStore } from '../../stores/workStore'
+import type { Connector, ConnectorField, ConnectorFieldValue } from '../../types/work'
 
 type Props = {
   /** Working directory passed through to mcpStore.createServer. */
   cwd?: string
 }
 
+/** Initial form state for a connector, from each field's declared default. */
+export function initialConnectorValues(
+  fields: readonly ConnectorField[],
+): Record<string, ConnectorFieldValue> {
+  const values: Record<string, ConnectorFieldValue> = {}
+  for (const field of fields) {
+    if (field.type === 'checkbox') values[field.key] = field.defaultValue
+    else if (field.type === 'select') values[field.key] = field.defaultValue
+    else values[field.key] = ''
+  }
+  return values
+}
+
+/** True when every required text field has a non-empty value. */
+export function isConnectorFormComplete(
+  fields: readonly ConnectorField[],
+  values: Record<string, ConnectorFieldValue>,
+): boolean {
+  return fields.every((field) => {
+    if (field.type !== 'text' && field.type !== 'password') return true
+    if (!field.required) return true
+    const value = values[field.key]
+    return typeof value === 'string' && value.trim().length > 0
+  })
+}
+
 /**
- * One-click MCP connectors. Everything here funnels into the existing
- * createServer path — the catalog only spares a non-technical user from
- * hand-writing a stdio command, args array and env block.
+ * One-click MCP connectors. The catalog is a folder of JSON files in
+ * ~/.superai/connectors served by the local server; this component only
+ * renders it and funnels the result into the existing createServer path.
+ * The server also renders the config from the form values, so the template
+ * format has exactly one implementation.
  */
 export function ConnectorCatalog({ cwd }: Props) {
   const t = useTranslation()
+  const locale = useSettingsStore((s) => s.locale)
   const createServer = useMcpStore((s) => s.createServer)
   const servers = useMcpStore((s) => s.servers)
   const addToast = useUIStore((s) => s.addToast)
+  const connectors = useWorkStore((s) => s.connectors)
+  const homePath = useWorkStore((s) => s.homePath)
+  const fetchConnectors = useWorkStore((s) => s.fetchConnectors)
+  const fetchHome = useWorkStore((s) => s.fetchHome)
 
-  const [active, setActive] = useState<ConnectorDefinition | null>(null)
+  const [active, setActive] = useState<Connector | null>(null)
   const [serverName, setServerName] = useState('')
   const [values, setValues] = useState<Record<string, ConnectorFieldValue>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const openConnector = (connector: ConnectorDefinition) => {
+  useEffect(() => {
+    void fetchConnectors()
+    void fetchHome()
+  }, [fetchConnectors, fetchHome])
+
+  const L = (text: Parameters<typeof pickLocalized>[0]) => pickLocalized(text, locale)
+
+  const openConnector = (connector: Connector) => {
     setActive(connector)
     setServerName(connector.serverName)
-    setValues(initialConnectorValues(connector))
+    setValues(initialConnectorValues(connector.fields))
   }
 
   const closeConnector = () => {
@@ -45,27 +83,24 @@ export function ConnectorCatalog({ cwd }: Props) {
     setValues({})
   }
 
-  const isConnected = (connector: ConnectorDefinition) =>
+  const isConnected = (connector: Connector) =>
     servers.some((server) => server.name === connector.serverName)
 
   const canSubmit =
     !!active &&
-    !!active.buildConfig &&
+    active.status === 'available' &&
     serverName.trim().length > 0 &&
-    isConnectorFormComplete(active, values)
+    isConnectorFormComplete(active.fields, values)
 
   const handleConnect = async () => {
-    if (!active?.buildConfig || !canSubmit) return
+    if (!active || !canSubmit) return
     setIsSubmitting(true)
     try {
-      await createServer(
-        serverName.trim(),
-        { scope: 'user', config: active.buildConfig(values) },
-        cwd,
-      )
+      const { config } = await workApi.renderConnector(active.id, values)
+      await createServer(serverName.trim(), { scope: 'user', config }, cwd)
       addToast({ type: 'success', message: t('connector.connected') })
-      if (active.postConnectHintKey) {
-        addToast({ type: 'info', message: t(active.postConnectHintKey) })
+      if (active.postConnectHint) {
+        addToast({ type: 'info', message: L(active.postConnectHint) })
       }
       closeConnector()
     } catch (error) {
@@ -85,12 +120,20 @@ export function ConnectorCatalog({ cwd }: Props) {
           {t('connector.sectionTitle')}
         </h3>
       </div>
-      <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+      <p className="mb-1 text-sm text-[var(--color-text-secondary)]">
         {t('connector.sectionDescription')}
       </p>
+      {homePath && (
+        <p className="mb-4 text-xs text-[var(--color-text-tertiary)]" data-testid="connector-folder-hint">
+          {t('connector.folderHint')}{' '}
+          <code className="rounded bg-[var(--color-surface-container)] px-1 py-0.5 font-[var(--font-mono)]">
+            {homePath}
+          </code>
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {CONNECTOR_CATALOG.map((connector) => {
+        {connectors.map((connector) => {
           const comingSoon = connector.status === 'coming-soon'
           const connected = isConnected(connector)
           return (
@@ -111,7 +154,7 @@ export function ConnectorCatalog({ cwd }: Props) {
                   {connector.icon}
                 </span>
                 <span className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t(connector.nameKey)}
+                  {L(connector.name)}
                 </span>
                 <span
                   data-testid={`connector-provenance-${connector.id}`}
@@ -124,10 +167,10 @@ export function ConnectorCatalog({ cwd }: Props) {
               </div>
 
               <p className="text-xs leading-snug text-[var(--color-text-secondary)]">
-                {t(connector.descriptionKey)}
+                {L(connector.description)}
               </p>
               <p className="text-[11px] text-[var(--color-text-tertiary)]">
-                {t(connector.worksWithKey)}
+                {L(connector.worksWith)}
               </p>
 
               <div className="mt-2 flex items-center gap-2">
@@ -160,7 +203,7 @@ export function ConnectorCatalog({ cwd }: Props) {
       <Modal
         open={!!active}
         onClose={closeConnector}
-        title={active ? t(active.nameKey) : undefined}
+        title={active ? L(active.name) : undefined}
         footer={
           <>
             <Button variant="secondary" onClick={closeConnector}>
@@ -180,7 +223,7 @@ export function ConnectorCatalog({ cwd }: Props) {
         {active && (
           <div className="flex flex-col gap-4" data-testid="connector-form">
             <p className="text-sm text-[var(--color-text-secondary)]">
-              {t(active.descriptionKey)}
+              {L(active.description)}
             </p>
 
             {active.packageName && (
@@ -215,11 +258,11 @@ export function ConnectorCatalog({ cwd }: Props) {
                     />
                     <span>
                       <span className="text-sm text-[var(--color-text-primary)]">
-                        {t(field.labelKey)}
+                        {L(field.label)}
                       </span>
-                      {field.hintKey && (
+                      {field.hint && (
                         <span className="block text-xs text-[var(--color-text-tertiary)]">
-                          {t(field.hintKey)}
+                          {L(field.hint)}
                         </span>
                       )}
                     </span>
@@ -231,7 +274,7 @@ export function ConnectorCatalog({ cwd }: Props) {
                 return (
                   <div key={field.key} className="flex flex-col gap-1">
                     <label className="text-sm font-medium text-[var(--color-text-primary)]">
-                      {t(field.labelKey)}
+                      {L(field.label)}
                     </label>
                     <select
                       data-testid={`connector-field-${field.key}`}
@@ -243,10 +286,13 @@ export function ConnectorCatalog({ cwd }: Props) {
                     >
                       {field.options.map((option) => (
                         <option key={option.value} value={option.value}>
-                          {t(option.labelKey)}
+                          {L(option.label)}
                         </option>
                       ))}
                     </select>
+                    {field.hint && (
+                      <span className="text-xs text-[var(--color-text-tertiary)]">{L(field.hint)}</span>
+                    )}
                   </div>
                 )
               }
@@ -254,7 +300,7 @@ export function ConnectorCatalog({ cwd }: Props) {
               return (
                 <Input
                   key={field.key}
-                  label={t(field.labelKey)}
+                  label={L(field.label)}
                   required={field.required}
                   type={field.type === 'password' ? 'password' : 'text'}
                   placeholder={field.placeholder}
@@ -267,12 +313,12 @@ export function ConnectorCatalog({ cwd }: Props) {
               )
             })}
 
-            {active.securityNoteKey && (
+            {active.securityNote && (
               <p
                 data-testid="connector-security-note"
                 className="rounded-[var(--radius-md)] border border-[var(--color-warning)]/25 bg-[var(--color-warning)]/8 px-3 py-2 text-xs text-[var(--color-text-secondary)]"
               >
-                {t(active.securityNoteKey)}
+                {L(active.securityNote)}
               </p>
             )}
           </div>

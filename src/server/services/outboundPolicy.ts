@@ -36,47 +36,79 @@
  */
 
 import * as fs from 'fs'
-import * as os from 'os'
 import * as path from 'path'
 
-/**
- * Tool names that mean "this changes something outside the user's machine".
- *
- * Matched as a segment so a read like `im_v1_message_list` or
- * `docx_v1_document_get` does not trip it, while both vendor naming styles do:
- * Feishu puts the verb last (`im_v1_message_create`), Microsoft 365 puts it
- * first (`send-mail`).
- *
- * Biased toward over-matching on purpose: a needless prompt is an annoyance,
- * a missed one sends mail on the user's behalf.
- */
-export const OUTBOUND_VERBS = [
-  'create',
-  'send',
-  'post',
-  'update',
-  'patch',
-  'delete',
-  'remove',
-  'reply',
-  'forward',
-  'invite',
-  'publish',
-  'move',
-  'archive',
-  'write',
-  'share',
-  'upload',
-] as const
+import {
+  ensureSuperaiHomeOnce,
+  getOutboundPolicyPath,
+  getRuntimeDir,
+  readUserTextFile,
+} from './superaiHome.js'
+import { BUILT_IN_OUTBOUND_VERBS } from './workplaceDefaults.js'
 
-export const OUTBOUND_TOOL_MATCHER = `^mcp__.+__(.+[_-])?(${OUTBOUND_VERBS.join('|')})([_-].+)?$`
+/**
+ * The shipped verb list (see workplaceDefaults.ts for the reasoning). At
+ * runtime the list comes from ~/.superai/outbound-policy.json, which starts as
+ * a copy of this; the constant is the fallback and the documented default.
+ */
+export const OUTBOUND_VERBS: readonly string[] = BUILT_IN_OUTBOUND_VERBS
+
+/** A verb becomes part of a regex; anything but a plain word is refused. */
+const VERB_PATTERN = /^[a-z][a-z0-9]{0,31}$/
+
+/**
+ * Verbs from ~/.superai/outbound-policy.json, or the built-ins when the file
+ * is missing, unreadable, or malformed. Malformed is LOUD: a policy file the
+ * user believed was in force but was silently ignored is exactly the failure
+ * this feature exists to prevent.
+ */
+export function loadOutboundVerbs(filePath: string = getOutboundPolicyPath()): string[] {
+  ensureSuperaiHomeOnce()
+  let raw: unknown
+  try {
+    raw = JSON.parse(readUserTextFile(filePath))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.error(
+        `[OutboundPolicy] ${filePath} is not valid JSON; using the built-in verb list.`,
+        error,
+      )
+    }
+    return [...BUILT_IN_OUTBOUND_VERBS]
+  }
+  const verbs = (raw as { verbs?: unknown })?.verbs
+  if (!Array.isArray(verbs) || verbs.length === 0) {
+    console.error(
+      `[OutboundPolicy] ${filePath} needs a non-empty "verbs" array; using the built-in verb list.`,
+    )
+    return [...BUILT_IN_OUTBOUND_VERBS]
+  }
+  const bad = verbs.filter((v) => typeof v !== 'string' || !VERB_PATTERN.test(v))
+  if (bad.length > 0) {
+    console.error(
+      `[OutboundPolicy] ${filePath}: ignoring invalid verbs ${JSON.stringify(bad)} (lowercase words only).`,
+    )
+  }
+  const good = verbs.filter((v): v is string => typeof v === 'string' && VERB_PATTERN.test(v))
+  return good.length > 0 ? [...new Set(good)] : [...BUILT_IN_OUTBOUND_VERBS]
+}
+
+export function buildOutboundToolMatcher(verbs: readonly string[] = OUTBOUND_VERBS): string {
+  return `^mcp__.+__(.+[_-])?(${verbs.join('|')})([_-].+)?$`
+}
+
+/** The matcher for the shipped verbs; the documented default. */
+export const OUTBOUND_TOOL_MATCHER = buildOutboundToolMatcher(OUTBOUND_VERBS)
 
 // ASCII-only: this travels through settings JSON and a Windows shell.
 export const OUTBOUND_ASK_REASON =
   'Work mode checks in before anything leaves your account. Review the details, then approve or reject.'
 
-export function matchesOutboundTool(toolName: string): boolean {
-  return new RegExp(OUTBOUND_TOOL_MATCHER).test(toolName)
+export function matchesOutboundTool(
+  toolName: string,
+  verbs: readonly string[] = OUTBOUND_VERBS,
+): boolean {
+  return new RegExp(buildOutboundToolMatcher(verbs)).test(toolName)
 }
 
 export function buildOutboundAskPayload(): Record<string, unknown> {
@@ -116,13 +148,14 @@ export function buildOutboundHookCommand(
 export function buildOutboundPolicySettings(
   responsePath: string,
   platform: NodeJS.Platform = process.platform,
+  verbs: readonly string[] = OUTBOUND_VERBS,
 ): Record<string, unknown> {
   const { command, shell } = buildOutboundHookCommand(responsePath, platform)
   return {
     hooks: {
       PreToolUse: [
         {
-          matcher: OUTBOUND_TOOL_MATCHER,
+          matcher: buildOutboundToolMatcher(verbs),
           hooks: [
             {
               type: 'command',
@@ -138,10 +171,9 @@ export function buildOutboundPolicySettings(
   }
 }
 
+/** Generated files live under ~/.superai/.runtime, never beside user config. */
 function getPolicyDir(): string {
-  const configDir =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'work-mode-policy')
+  return path.join(getRuntimeDir(), 'outbound-policy')
 }
 
 /**
@@ -154,6 +186,7 @@ function getPolicyDir(): string {
 export function writeOutboundPolicy(
   dir: string = getPolicyDir(),
   platform: NodeJS.Platform = process.platform,
+  verbs: readonly string[] = loadOutboundVerbs(),
 ): string | null {
   try {
     fs.mkdirSync(dir, { recursive: true })
@@ -166,7 +199,7 @@ export function writeOutboundPolicy(
     )
     fs.writeFileSync(
       settingsPath,
-      JSON.stringify(buildOutboundPolicySettings(responsePath, platform), null, 2),
+      JSON.stringify(buildOutboundPolicySettings(responsePath, platform, verbs), null, 2),
       'utf-8',
     )
     return settingsPath

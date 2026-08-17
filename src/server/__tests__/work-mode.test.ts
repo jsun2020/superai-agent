@@ -1,12 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 import {
   ROLE_PROMPTS,
-  SESSION_ROLES,
   WORK_MODE_PROMPT,
   buildModeCliArgs,
   isSessionMode,
   isSessionRole,
+  listSessionRoles,
 } from '../services/workMode'
+import { useTempSuperaiHome } from './fixtures/tempSuperaiHome'
+
+// Every test here runs against a fresh, freshly-seeded ~/.superai, so the
+// prompts under test are the shipped ones, not whatever this machine's owner
+// last edited.
+useTempSuperaiHome()
+
+/** The three roles this product ships with; the seeds must reproduce them. */
+const SESSION_ROLES = ['assistant', 'sales', 'analyst'] as const
 
 describe('work mode', () => {
   test('buildModeCliArgs appends the work-mode system prompt only for work sessions', () => {
@@ -48,14 +57,21 @@ describe('work mode', () => {
 })
 
 describe('workplace roles', () => {
-  test('isSessionRole accepts only the three shipped roles', () => {
-    for (const role of SESSION_ROLES) {
-      expect(isSessionRole(role)).toBe(true)
-    }
+  test('the seeded folder offers exactly the three shipped roles', () => {
+    expect(listSessionRoles()).toEqual([...SESSION_ROLES])
     // 'office' is deliberately NOT a role — no role at all is the document
     // experience that WORK_MODE_PROMPT already describes.
-    expect(isSessionRole('office')).toBe(false)
+    expect(listSessionRoles()).not.toContain('office')
+  })
+
+  test('isSessionRole is a shape check on the id, not an existence check', () => {
+    // Existence is loadWorkRoles()' job; a session stamped with a role whose
+    // file was later deleted must still be readable.
+    for (const role of SESSION_ROLES) expect(isSessionRole(role)).toBe(true)
+    expect(isSessionRole('recruiter')).toBe(true)
     expect(isSessionRole('')).toBe(false)
+    expect(isSessionRole('Not Valid')).toBe(false)
+    expect(isSessionRole('../escape')).toBe(false)
     expect(isSessionRole(undefined)).toBe(false)
     expect(isSessionRole(42)).toBe(false)
   })
@@ -67,7 +83,7 @@ describe('workplace roles', () => {
       expect(args).toHaveLength(2)
       // One flag carrying one concatenated prompt — passing the flag twice is
       // not guaranteed to be additive on the CLI side.
-      expect(args[1]).toBe(`${WORK_MODE_PROMPT}\n\n${ROLE_PROMPTS[role]}`)
+      expect(args[1]).toBe(`${WORK_MODE_PROMPT}\n\n${ROLE_PROMPTS[role]!}`)
     }
   })
 
@@ -90,17 +106,17 @@ describe('workplace roles', () => {
   })
 
   test('every role points at its own subagent and restates its key guard', () => {
-    expect(ROLE_PROMPTS.assistant).toContain("'assistant' subagent")
-    expect(ROLE_PROMPTS.assistant).toContain('Draft, never send')
-    expect(ROLE_PROMPTS.sales).toContain("'sales' subagent")
-    expect(ROLE_PROMPTS.sales).toContain('Never invent a price')
-    expect(ROLE_PROMPTS.analyst).toContain("'analyst' subagent")
-    expect(ROLE_PROMPTS.analyst).toContain('never write over')
+    expect(ROLE_PROMPTS.assistant!).toContain("'assistant' subagent")
+    expect(ROLE_PROMPTS.assistant!).toContain('Draft, never send')
+    expect(ROLE_PROMPTS.sales!).toContain("'sales' subagent")
+    expect(ROLE_PROMPTS.sales!).toContain('Never invent a price')
+    expect(ROLE_PROMPTS.analyst!).toContain("'analyst' subagent")
+    expect(ROLE_PROMPTS.analyst!).toContain('never write over')
   })
 
   test('role prompts are ASCII-only so they survive Windows arg passing', () => {
     for (const role of SESSION_ROLES) {
-      expect(/^[\x20-\x7E\n]*$/.test(ROLE_PROMPTS[role])).toBe(true)
+      expect(/^[\x20-\x7E\n]*$/.test(ROLE_PROMPTS[role]!)).toBe(true)
     }
   })
 })

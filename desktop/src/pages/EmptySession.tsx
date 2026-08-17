@@ -17,7 +17,9 @@ import { DirectoryPicker } from '../components/shared/DirectoryPicker'
 import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
 import { ModelSelector } from '../components/controls/ModelSelector'
 import { AttachmentGallery } from '../components/chat/AttachmentGallery'
-import { RoleCards, ROLE_EXAMPLE_KEYS } from '../components/chat/RoleCards'
+import { RoleCards } from '../components/chat/RoleCards'
+import { pickLocalized } from '../lib/localized'
+import { useWorkStore } from '../stores/workStore'
 import { FileSearchMenu, type FileSearchMenuHandle } from '../components/chat/FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from '../components/chat/LocalSlashCommandPanel'
 import {
@@ -168,11 +170,18 @@ export function EmptySession() {
     }
   }, [workDir])
 
-  // Picking a role swaps the generic document examples for that role's own.
-  const suggestionKeys = useMemo<readonly TranslationKey[]>(
-    () => (role ? ROLE_EXAMPLE_KEYS[role] : DEFAULT_WORK_SUGGESTION_KEYS),
-    [role],
-  )
+  // Picking a role swaps the generic document examples for that role's own
+  // (which live in the role's file under ~/.superai/roles, so they are plain
+  // localised text rather than translation keys).
+  const locale = useSettingsStore((s) => s.locale)
+  const roles = useWorkStore((s) => s.roles)
+  const suggestions = useMemo<readonly string[]>(() => {
+    const picked = role ? roles.find((r) => r.id === role) : undefined
+    if (picked && picked.examples.length > 0) {
+      return picked.examples.map((example) => pickLocalized(example, locale))
+    }
+    return DEFAULT_WORK_SUGGESTION_KEYS.map((key: TranslationKey) => t(key))
+  }, [role, roles, locale, t])
 
   const filteredCommands = useMemo(() => {
     const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
@@ -517,17 +526,17 @@ export function EmptySession() {
             <>
               <RoleCards value={role} onChange={setRole} />
               <div className="mt-5 flex max-w-md flex-wrap justify-center gap-2" data-testid="work-mode-suggestions">
-                {suggestionKeys.map((key) => (
+                {suggestions.map((text) => (
                   <button
-                    key={key}
+                    key={text}
                     type="button"
                     onClick={() => {
-                      setInput(t(key))
+                      setInput(text)
                       requestAnimationFrame(() => textareaRef.current?.focus())
                     }}
                     className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-focus)] hover:text-[var(--color-text-primary)]"
                   >
-                    {t(key)}
+                    {text}
                   </button>
                 ))}
               </div>

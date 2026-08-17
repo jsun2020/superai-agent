@@ -6,34 +6,149 @@ vi.mock('../../i18n', () => ({
   useTranslation: () => (key: string) => key,
 }))
 
-import { ConnectorCatalog } from './ConnectorCatalog'
+const renderConnector = vi.fn()
+vi.mock('../../api/work', () => ({
+  workApi: {
+    home: vi.fn(),
+    roles: vi.fn(),
+    connectors: vi.fn(),
+    renderConnector: (...args: unknown[]) => renderConnector(...args),
+  },
+}))
+
 import {
-  CONNECTOR_CATALOG,
+  ConnectorCatalog,
   initialConnectorValues,
   isConnectorFormComplete,
-} from '../../constants/connectorCatalog'
+} from './ConnectorCatalog'
 import { useMcpStore } from '../../stores/mcpStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useWorkStore } from '../../stores/workStore'
+import type { Connector } from '../../types/work'
+
+/**
+ * What GET /api/work/connectors returns for a freshly seeded ~/.superai —
+ * the shape the server ships, minus the config templates (rendered
+ * server-side, so the desktop never sees them).
+ */
+const SEEDED_CONNECTORS: Connector[] = [
+  {
+    id: 'feishu',
+    serverName: 'lark-mcp',
+    icon: 'forum',
+    name: { en: 'Feishu / Lark', zh: '飞书 / Lark' },
+    description: { en: 'Feishu docs, sheets, messages.', zh: '飞书文档。' },
+    worksWith: { en: 'Docs · Sheets', zh: '文档 · 表格' },
+    provenance: 'official',
+    packageName: '@larksuiteoapi/lark-mcp',
+    status: 'available',
+    securityNote: { en: 'Secret stored in plain text.' },
+    fields: [
+      { key: 'appId', type: 'text', label: { en: 'App ID' }, required: true },
+      { key: 'appSecret', type: 'password', label: { en: 'App Secret' }, required: true },
+      {
+        key: 'domain',
+        type: 'select',
+        label: { en: 'Platform' },
+        defaultValue: '',
+        options: [
+          { value: '', label: { en: 'Feishu' } },
+          { value: 'https://open.larksuite.com', label: { en: 'Lark' } },
+        ],
+      },
+    ],
+    source: 'file',
+  },
+  {
+    id: 'microsoft365',
+    serverName: 'ms-365',
+    icon: 'mail',
+    name: 'Microsoft 365',
+    description: { en: 'Outlook via Graph.' },
+    worksWith: { en: 'Mail · Calendar' },
+    provenance: 'community',
+    packageName: '@softeria/ms-365-mcp-server',
+    status: 'available',
+    postConnectHint: { en: 'Now run the sign-in.' },
+    fields: [
+      { key: 'readOnly', type: 'checkbox', label: { en: 'Read-only' }, defaultValue: true },
+      { key: 'orgMode', type: 'checkbox', label: { en: 'Work account' }, defaultValue: false },
+    ],
+    source: 'file',
+  },
+  {
+    id: 'slack',
+    serverName: 'slack',
+    icon: 'tag',
+    name: 'Slack',
+    description: { en: 'Coming.' },
+    worksWith: { en: 'Channels' },
+    provenance: 'community',
+    status: 'coming-soon',
+    fields: [],
+    source: 'file',
+  },
+]
 
 const createServer = vi.fn()
 const addToast = vi.fn()
+const fetchConnectors = vi.fn()
+const fetchHome = vi.fn()
 
 describe('ConnectorCatalog', () => {
   beforeEach(() => {
     createServer.mockReset()
     createServer.mockResolvedValue({ name: 'lark-mcp' })
     addToast.mockReset()
+    renderConnector.mockReset()
+    renderConnector.mockImplementation(async (id: string, values: Record<string, unknown>) => ({
+      // A stand-in for the server's renderer: enough to prove the desktop
+      // forwards the form and hands the RESULT to createServer untouched.
+      config: { type: 'stdio', command: 'npx', args: [id, JSON.stringify(values)], env: {} },
+    }))
+    fetchConnectors.mockReset()
+    fetchConnectors.mockResolvedValue(undefined)
+    fetchHome.mockReset()
+    fetchHome.mockResolvedValue(undefined)
     useMcpStore.setState({ servers: [], createServer } as Partial<
       ReturnType<typeof useMcpStore.getState>
     >)
     useUIStore.setState({ addToast } as Partial<ReturnType<typeof useUIStore.getState>>)
+    useSettingsStore.setState({ locale: 'en' } as Partial<ReturnType<typeof useSettingsStore.getState>>)
+    useWorkStore.setState({
+      connectors: SEEDED_CONNECTORS,
+      connectorsLoaded: true,
+      homePath: 'C:\\Users\\me\\.superai',
+      fetchConnectors,
+      fetchHome,
+    } as Partial<ReturnType<typeof useWorkStore.getState>>)
   })
 
-  it('renders a card for every catalog entry', () => {
+  it('asks the server for the catalog and the folder path on mount', () => {
     render(<ConnectorCatalog />)
-    for (const connector of CONNECTOR_CATALOG) {
+    expect(fetchConnectors).toHaveBeenCalledTimes(1)
+    expect(fetchHome).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders a card for every connector the server returned', () => {
+    render(<ConnectorCatalog />)
+    for (const connector of SEEDED_CONNECTORS) {
       expect(screen.getByTestId(`connector-card-${connector.id}`)).toBeInTheDocument()
     }
+  })
+
+  it('tells the user where the files live', () => {
+    render(<ConnectorCatalog />)
+    expect(screen.getByTestId('connector-folder-hint')).toHaveTextContent('C:\\Users\\me\\.superai')
+  })
+
+  it('renders names in the current locale', () => {
+    useSettingsStore.setState({ locale: 'zh' } as Partial<ReturnType<typeof useSettingsStore.getState>>)
+    render(<ConnectorCatalog />)
+    expect(screen.getByText('飞书 / Lark')).toBeInTheDocument()
+    // Plain-string names are the same in every locale.
+    expect(screen.getByText('Microsoft 365')).toBeInTheDocument()
   })
 
   it('offers Connect only for available entries', () => {
@@ -53,7 +168,7 @@ describe('ConnectorCatalog', () => {
     )
   })
 
-  it('builds the documented Feishu stdio command from the form', async () => {
+  it('sends the form to the server renderer and hands its config to createServer unchanged', async () => {
     render(<ConnectorCatalog />)
     fireEvent.click(screen.getByTestId('connector-connect-feishu'))
 
@@ -63,29 +178,6 @@ describe('ConnectorCatalog', () => {
     fireEvent.change(screen.getByTestId('connector-field-appSecret'), {
       target: { value: 'secret_test' },
     })
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('connector-submit'))
-    })
-
-    await waitFor(() => expect(createServer).toHaveBeenCalled())
-    const [name, payload] = createServer.mock.calls[0]!
-    expect(name).toBe('lark-mcp')
-    expect(payload.scope).toBe('user')
-    expect(payload.config).toEqual({
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@larksuiteoapi/lark-mcp', 'mcp', '-a', 'cli_test123', '-s', 'secret_test'],
-      env: {},
-    })
-  })
-
-  it('adds --domain only for international Lark', async () => {
-    render(<ConnectorCatalog />)
-    fireEvent.click(screen.getByTestId('connector-connect-feishu'))
-
-    fireEvent.change(screen.getByTestId('connector-field-appId'), { target: { value: 'a' } })
-    fireEvent.change(screen.getByTestId('connector-field-appSecret'), { target: { value: 'b' } })
     fireEvent.change(screen.getByTestId('connector-field-domain'), {
       target: { value: 'https://open.larksuite.com' },
     })
@@ -95,9 +187,17 @@ describe('ConnectorCatalog', () => {
     })
 
     await waitFor(() => expect(createServer).toHaveBeenCalled())
-    const args = createServer.mock.calls[0]![1].config.args
-    expect(args).toContain('--domain')
-    expect(args[args.indexOf('--domain') + 1]).toBe('https://open.larksuite.com')
+    expect(renderConnector).toHaveBeenCalledWith('feishu', {
+      appId: 'cli_test123',
+      appSecret: 'secret_test',
+      domain: 'https://open.larksuite.com',
+    })
+    const [name, payload] = createServer.mock.calls[0]!
+    expect(name).toBe('lark-mcp')
+    expect(payload.scope).toBe('user')
+    expect(payload.config).toEqual(
+      (await renderConnector.mock.results[0]!.value).config,
+    )
   })
 
   it('warns that the Feishu secret is stored in plain text', () => {
@@ -106,7 +206,7 @@ describe('ConnectorCatalog', () => {
     expect(screen.getByTestId('connector-security-note')).toBeInTheDocument()
   })
 
-  it('defaults Microsoft 365 to read-only and stores no credentials', async () => {
+  it('defaults Microsoft 365 to read-only and forwards the checkbox state', async () => {
     render(<ConnectorCatalog />)
     fireEvent.click(screen.getByTestId('connector-connect-microsoft365'))
 
@@ -118,19 +218,12 @@ describe('ConnectorCatalog', () => {
     })
 
     await waitFor(() => expect(createServer).toHaveBeenCalled())
-    const config = createServer.mock.calls[0]![1].config
-    expect(config.args).toEqual([
-      '-y',
-      '@softeria/ms-365-mcp-server',
-      '--preset',
-      'mail,calendar',
-      '--read-only',
-    ])
-    // Device-code auth: nothing secret may be written into the MCP config.
-    expect(config.env).toEqual({})
+    expect(renderConnector).toHaveBeenCalledWith('microsoft365', { readOnly: true, orgMode: false })
+    // The post-connect hint comes from the file, in the current locale.
+    expect(addToast).toHaveBeenCalledWith({ type: 'info', message: 'Now run the sign-in.' })
   })
 
-  it('drops --read-only when the user turns it off', async () => {
+  it('forwards read-only OFF when the user unticks it', async () => {
     render(<ConnectorCatalog />)
     fireEvent.click(screen.getByTestId('connector-connect-microsoft365'))
     fireEvent.click(screen.getByTestId('connector-field-readOnly'))
@@ -140,7 +233,7 @@ describe('ConnectorCatalog', () => {
     })
 
     await waitFor(() => expect(createServer).toHaveBeenCalled())
-    expect(createServer.mock.calls[0]![1].config.args).not.toContain('--read-only')
+    expect(renderConnector).toHaveBeenCalledWith('microsoft365', { readOnly: false, orgMode: false })
   })
 
   it('surfaces a failure instead of reporting success', async () => {
@@ -156,31 +249,38 @@ describe('ConnectorCatalog', () => {
       expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'npx not found' }),
     )
   })
+
+  it('surfaces a render failure too, and never calls createServer with nothing', async () => {
+    renderConnector.mockRejectedValue(new Error('Unknown connector: feishu'))
+    render(<ConnectorCatalog />)
+    fireEvent.click(screen.getByTestId('connector-connect-microsoft365'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('connector-submit'))
+    })
+
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'Unknown connector: feishu' }),
+    )
+    expect(createServer).not.toHaveBeenCalled()
+  })
 })
 
 describe('connector form validation', () => {
-  const feishu = CONNECTOR_CATALOG.find((c) => c.id === 'feishu')!
-  const ms365 = CONNECTOR_CATALOG.find((c) => c.id === 'microsoft365')!
+  const feishu = SEEDED_CONNECTORS.find((c) => c.id === 'feishu')!
+  const ms365 = SEEDED_CONNECTORS.find((c) => c.id === 'microsoft365')!
 
   it('requires both Feishu credentials before connecting', () => {
-    const values = initialConnectorValues(feishu)
-    expect(isConnectorFormComplete(feishu, values)).toBe(false)
-    expect(isConnectorFormComplete(feishu, { ...values, appId: 'a' })).toBe(false)
-    expect(isConnectorFormComplete(feishu, { ...values, appId: 'a', appSecret: 'b' })).toBe(true)
+    const values = initialConnectorValues(feishu.fields)
+    expect(isConnectorFormComplete(feishu.fields, values)).toBe(false)
+    expect(isConnectorFormComplete(feishu.fields, { ...values, appId: 'a' })).toBe(false)
+    expect(isConnectorFormComplete(feishu.fields, { ...values, appId: 'a', appSecret: 'b' })).toBe(true)
     // Whitespace is not a credential.
-    expect(isConnectorFormComplete(feishu, { ...values, appId: ' ', appSecret: ' ' })).toBe(false)
+    expect(isConnectorFormComplete(feishu.fields, { ...values, appId: ' ', appSecret: ' ' })).toBe(false)
   })
 
   it('needs no input for the device-code connector', () => {
-    expect(isConnectorFormComplete(ms365, initialConnectorValues(ms365))).toBe(true)
-    expect(initialConnectorValues(ms365)).toEqual({ readOnly: true, orgMode: false })
-  })
-
-  it('every available connector can build a config', () => {
-    for (const connector of CONNECTOR_CATALOG) {
-      if (connector.status === 'available') {
-        expect(typeof connector.buildConfig).toBe('function')
-      }
-    }
+    expect(isConnectorFormComplete(ms365.fields, initialConnectorValues(ms365.fields))).toBe(true)
+    expect(initialConnectorValues(ms365.fields)).toEqual({ readOnly: true, orgMode: false })
   })
 })

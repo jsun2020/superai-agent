@@ -24,7 +24,7 @@ import {
 import {
   isSessionMode,
   isSessionRole,
-  SESSION_ROLES,
+  listSessionRoles,
 } from '../services/workMode.js'
 
 export async function handleSessionsApi(
@@ -183,10 +183,15 @@ async function createSession(req: Request): Promise<Response> {
     throw ApiError.badRequest("mode must be 'work' or 'code'")
   }
 
-  if (body.role !== undefined && !isSessionRole(body.role)) {
-    throw ApiError.badRequest(
-      `role must be one of: ${SESSION_ROLES.join(', ')}`,
-    )
+  if (body.role !== undefined && body.role !== null) {
+    // Shape first, then existence: a role is a file in ~/.superai/roles, so
+    // the valid set is whatever is on disk right now.
+    const available = isSessionRole(body.role) ? listSessionRoles() : []
+    if (!available.includes(body.role)) {
+      throw ApiError.badRequest(
+        `role must be one of: ${listSessionRoles().join(', ')}`,
+      )
+    }
   }
 
   const result = await sessionService.createSession(

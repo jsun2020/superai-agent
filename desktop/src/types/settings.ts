@@ -8,10 +8,11 @@ export type ResolvedTheme = 'light' | 'dark'
 // Product mode: 'work' = general office users, 'code' = developers (default).
 export type AppMode = 'work' | 'code'
 // Optional workplace role within Work mode, chosen per session on the new
-// session screen. Mirrors SessionRole in src/server/services/workMode.ts.
+// session screen. Mirrors SessionRole in src/server/services/workMode.ts: the
+// id of a role file in ~/.superai/roles (lowercase, digits, dashes). The list
+// of available roles comes from GET /api/work/roles — see stores/workStore.ts.
 // No 'office' role: no role at all is the document experience.
-export type SessionRole = 'assistant' | 'sales' | 'analyst'
-export const SESSION_ROLES: readonly SessionRole[] = ['assistant', 'sales', 'analyst'] as const
+export type SessionRole = string
 
 export type ModelInfo = {
   id: string
