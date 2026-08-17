@@ -660,6 +660,7 @@ function writeCellWithStyleStr(
   }
 
   const needsCompensation = cellWidth === 2 && needsWidthCompensation(cell.char)
+  const needsResync = cellWidth === 1 && needsColumnResync(cell.char)
 
   // On terminals with old wcwidth tables, a compensated emoji only advances
   // the cursor 1 column, so the CHA below skips column x+1 without painting
@@ -673,11 +674,24 @@ function writeCellWithStyleStr(
     diff.push({ type: 'cursorTo', col: px + 1 })
   }
 
-  diff.push({ type: 'stdout', content: cell.char })
+  if (needsResync && px === vw - 1 && isLegacyWindowsConsole()) {
+    // conhost wraps a glyph it considers full-width to the NEXT row before
+    // painting it when only one cell is left, leaving the cursor at (2, y+1)
+    // while we believe it is pending-wrap on row y — and no column move can
+    // repair a row error. Paint a space in the last cell instead.
+    diff.push({ type: 'stdout', content: ' ' })
+  } else {
+    diff.push({ type: 'stdout', content: cell.char })
+  }
 
   // Force terminal cursor to correct column after the emoji.
   if (needsCompensation) {
     diff.push({ type: 'cursorTo', col: px + cellWidth + 1 })
+  } else if (needsResync && px + 1 < vw) {
+    // Same idea, opposite direction: the terminal may have advanced TWO
+    // columns for a glyph we measured as one. Snap back to where our model
+    // says the next cell goes; a no-op on terminals that agree with us.
+    diff.push({ type: 'cursorTo', col: px + 2 })
   }
 
   // Update cursor — mutate in place to avoid Point allocation
@@ -747,6 +761,47 @@ function needsWidthCompensation(char: string): boolean {
     }
   }
   return false
+}
+
+/**
+ * Whether the terminal may draw a glyph we measure as width 1 in TWO cells,
+ * so the cursor must be re-synced after writing it.
+ *
+ * The legacy Windows console (conhost — what a double-clicked exe or cmd.exe
+ * opens on Windows 10) sizes East-Asian-Ambiguous glyphs by the console FONT.
+ * With the CJK fonts that Chinese/Japanese/Korean Windows ships by default,
+ * `·` `…` `—` `→` `●` `⚠` `↑` and friends are drawn full-width, while our
+ * stringWidth (ambiguousAsWide: false, matching every other terminal) says 1.
+ * After each such glyph the real cursor is one column ahead of the virtual
+ * one; once a line reaches the last column the terminal wraps EARLY and every
+ * relative cursor move for the rest of the frame lands one row too low —
+ * ghost lines between the prompt border and the prompt.
+ *
+ * Windows only (the class of terminal that does this), and not for box-drawing
+ * / block elements (U+2500–U+259F): conhost always draws those narrow, and
+ * they are the bulk of every frame (borders), so skipping them keeps the
+ * overhead to the handful of symbols per line.
+ */
+function needsColumnResync(char: string): boolean {
+  if (process.platform !== 'win32') return false
+  const cp = char.codePointAt(0)
+  if (cp === undefined || cp < 0x80) return false
+  if (cp >= 0x2500 && cp <= 0x259f) return false
+  return true
+}
+
+/**
+ * conhost proper, as opposed to Windows Terminal / VS Code / mintty, which
+ * host the app through ConPTY and size ambiguous glyphs narrow like everyone
+ * else. Only the last-column substitution needs this distinction: the
+ * cursorTo re-sync is a harmless no-op on the others.
+ */
+function isLegacyWindowsConsole(): boolean {
+  return (
+    process.platform === 'win32' &&
+    !process.env.WT_SESSION &&
+    !process.env.TERM_PROGRAM
+  )
 }
 
 class VirtualScreen {
