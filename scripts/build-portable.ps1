@@ -146,6 +146,12 @@ Copy-Item -LiteralPath $sidecarSrc -Destination (Join-Path $portableDir 'superai
 Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir "superai-agent-tui-$targetTriple.exe")
 Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'superai-agent-tui.exe')
 
+# The TUI now identifies itself as `superai` (Usage:/--version/console title),
+# so ship the matching command name too. Without this the user reads
+# "Usage: superai ..." and has no `superai` to type. Named to NOT collide with
+# Anthropic's own `claude` on PATH - that collision is the whole point.
+Copy-Item -LiteralPath $tuiSrc -Destination (Join-Path $portableDir 'superai.exe')
+
 Copy-Item -LiteralPath (Join-Path $repoRoot '.env.example') -Destination (Join-Path $portableDir '.env.example')
 
 # 2b) Vendor third-party tool binaries. The sidecar/TUI entrypoints prepend
@@ -215,7 +221,7 @@ Usage:
   2. Open .env.example in Notepad, fill in your API keys / model,
      and Save As ".env" (no .txt suffix).
   3. Double-click SuperAIAgent.exe to launch the desktop UI.
-     - Or run superai-agent-tui.exe from a terminal for the text UI.
+     - Or run superai.exe from a terminal for the text UI.
      - Closing the window kills every spawned child process automatically.
 
 DO NOT double-click superai-agent-sidecar.exe - it is an internal helper that
@@ -232,7 +238,8 @@ Optional WeChat IM setup:
 
 Files:
   SuperAIAgent.exe                    Desktop window     (USER - double-click this)
-  superai-agent-tui.exe               Terminal UI        (USER - run from a terminal)
+  superai.exe                         Terminal UI        (USER - run from a terminal)
+  superai-agent-tui.exe               Same binary, long-form name
   superai-agent-sidecar.exe           Server + adapters  (INTERNAL - do not run)
   superai-agent-sidecar-x86_64-...exe Target-triple alias Tauri''s externalBin needs
   superai-agent-tui-x86_64-...exe     Target-triple alias for the TUI

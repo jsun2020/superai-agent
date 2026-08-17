@@ -1,4 +1,6 @@
 import { feature } from 'bun:bundle';
+// Leaf constants module (no transitive imports) - safe on the --version fast path.
+import { PRODUCT_NAME } from '../constants/product.js';
 
 // Bugfix for corepack auto-pinning, which adds yarnpkg to peoples' package.jsons
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
@@ -33,11 +35,12 @@ if (feature('ABLATION_BASELINE') && process.env.CLAUDE_CODE_ABLATION_BASELINE) {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  // Fast-path for --version/-v: zero module loading needed
+  // Fast-path for --version/-v: no module loading beyond this file and the
+  // leaf product-identity constants.
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v' || args[0] === '-V')) {
     // MACRO.VERSION is inlined at build time
     // biome-ignore lint/suspicious/noConsole:: intentional console output
-    console.log(`${MACRO.VERSION} (Claude Code)`);
+    console.log(`${MACRO.VERSION} (${PRODUCT_NAME})`);
     return;
   }
 

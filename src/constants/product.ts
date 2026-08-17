@@ -1,3 +1,20 @@
+/**
+ * Product identity used at launch: the command a user types, and the name the
+ * CLI reports for itself (--version, --help, and the first-run welcome).
+ *
+ * This fork ships alongside Anthropic's own `claude` CLI and deliberately
+ * shares ~/.claude with it (see the settings-validation note in main.tsx).
+ * Sharing state is intended; sharing an *identity* is not - when `claude
+ * --help` and this binary print the same `Usage: claude` line, the two are
+ * indistinguishable in shell history, screenshots and bug reports.
+ *
+ * Scope: the launch surface only. Env vars (CLAUDE_CODE_*), API beta headers,
+ * OAuth scopes and CLAUDE.md discovery keep their upstream names - those are
+ * contracts with other systems, not branding.
+ */
+export const PRODUCT_NAME = 'SuperAI Agent'
+export const PRODUCT_COMMAND = 'superai'
+
 export const PRODUCT_URL = 'https://claude.com/claude-code'
 
 // Claude Code Remote session URLs
