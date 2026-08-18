@@ -28,6 +28,17 @@ describe('updateStore', () => {
     })
   })
 
+  it('explains a missing release manifest instead of the bare plugin message', async () => {
+    check.mockRejectedValue(new Error('Could not fetch a valid release JSON from the remote'))
+    const { useUpdateStore } = await import('./updateStore')
+    await useUpdateStore.getState().checkForUpdates()
+    const { status, error } = useUpdateStore.getState()
+    expect(status).toBe('error')
+    expect(error).toContain('Could not fetch a valid release JSON from the remote')
+    expect(error).toContain('github.com/jsun2020/superai-agent/releases/latest/download/latest.json')
+    expect(error).toContain('no GitHub Release has been published yet')
+  })
+
   it('stores available update metadata after a successful check', async () => {
     const update = {
       version: '0.2.0',

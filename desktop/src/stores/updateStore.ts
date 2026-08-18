@@ -73,8 +73,22 @@ async function setPendingUpdate(next: Update | null) {
   }
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
+/**
+ * Where the desktop looks for `latest.json` (mirrors the updater endpoint in
+ * src-tauri/tauri.conf.json). Shown in the error so "no release published"
+ * is diagnosable from the About panel instead of reading as a network fault.
+ */
+export const RELEASE_MANIFEST_URL =
+  'https://github.com/jsun2020/superai-agent/releases/latest/download/latest.json'
+
+export function getErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  // tauri-plugin-updater's blanket message for "every endpoint failed"
+  // (404 because no release exists yet, private repo, or offline).
+  if (/could not fetch a valid release json/i.test(message)) {
+    return `${message}. No release manifest is reachable at ${RELEASE_MANIFEST_URL} - either no GitHub Release has been published yet, the repository is not public, or the network blocks GitHub.`
+  }
+  return message
 }
 
 export const useUpdateStore = create<UpdateStore>((set, get) => ({

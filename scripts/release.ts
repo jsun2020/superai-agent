@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Release script for Claude Code Haha Desktop
+ * Release script for SuperAI Agent (desktop + TUI share one version)
  *
  * Usage:
  *   bun run scripts/release.ts patch       # 0.1.0 → 0.1.1
@@ -32,6 +32,17 @@ const VERSION_FILES = [
     path: path.join(root, 'desktop/src-tauri/Cargo.toml'),
     update(content: string, version: string) {
       return content.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`)
+    },
+  },
+  {
+    // The TUI's MACRO.VERSION (`superai --version`, the header) - the desktop
+    // and the terminal must report the same number.
+    path: path.join(root, 'preload.ts'),
+    update(content: string, version: string) {
+      return content.replace(
+        /(CLAUDE_CODE_LOCAL_VERSION \?\? ')[^']*(')/,
+        `$1${version}$2`,
+      )
     },
   },
 ]
@@ -135,6 +146,7 @@ await run([
   'desktop/src-tauri/tauri.conf.json',
   'desktop/src-tauri/Cargo.toml',
   'desktop/src-tauri/Cargo.lock',
+  'preload.ts',
   path.relative(root, releaseNotesPath),
 ])
 await run(['git', 'commit', '-m', `release: v${next}`])
