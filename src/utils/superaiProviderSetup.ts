@@ -11,14 +11,23 @@
  * same files so the desktop and the TUI always agree on the active provider.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { PROVIDER_PRESETS, type ProviderPreset } from '../server/config/providerPresets.js'
 import { ProviderService } from '../server/services/providerService.js'
 import type {
   ProviderTestResult,
   SavedProvider,
 } from '../server/types/provider.js'
+import {
+  getClaudeAIOAuthTokens,
+  getSubscriptionName,
+  isAnthropicAuthEnabled,
+} from './auth.js'
 import { normalizeApiKeyForConfig } from './authPortable.js'
 import { saveGlobalConfig } from './config.js'
+import { isEnvTruthy } from './envUtils.js'
 import { getDefaultSonnetModel } from './model/model.js'
 
 /** Base URL used for the "Anthropic API key" option. */
@@ -29,7 +38,80 @@ export type SetupOption =
   | { kind: 'preset'; preset: ProviderPreset }
   | { kind: 'anthropic-key' }
   | { kind: 'custom' }
-  | { kind: 'claude-login' }
+  /**
+   * The original Claude Code login flow. When a Claude.ai login already
+   * exists on this machine (`loggedInAs` is its subscription name, e.g.
+   * "Claude Max"), choosing it just keeps that account — no login flow.
+   */
+  | { kind: 'claude-login'; loggedInAs: string | null }
+
+// ---------------------------------------------------------------------------
+// "Has SuperAI's own first-run setup been offered on this machine?"
+//
+// SuperAI shares ~/.claude/ with Claude Code, so Claude Code's
+// `hasCompletedOnboarding` (in ~/.claude.json) is usually already true on a
+// developer machine — and a Claude.ai login usually already exists there. On
+// such a machine the TUI would silently run on the Claude account and SuperAI's
+// provider setup would never appear. The marker below is SuperAI's own, kept
+// next to its provider store, so the setup is offered exactly once per machine
+// regardless of Claude Code's state.
+// ---------------------------------------------------------------------------
+
+function superaiStoreDir(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'superai')
+}
+
+export function superaiSetupMarkerPath(): string {
+  return join(superaiStoreDir(), 'tui-setup.json')
+}
+
+export function hasCompletedSuperaiSetup(): boolean {
+  return existsSync(superaiSetupMarkerPath())
+}
+
+export function markSuperaiSetupCompleted(choice: string): void {
+  try {
+    mkdirSync(superaiStoreDir(), { recursive: true })
+    writeFileSync(
+      superaiSetupMarkerPath(),
+      JSON.stringify({ completedAt: new Date().toISOString(), choice }, null, 2) + '\n',
+      'utf-8',
+    )
+  } catch {
+    // Best effort: a failed marker only means the setup is offered again next start.
+  }
+}
+
+/**
+ * The name of the Claude.ai account the TUI would otherwise run on
+ * ("Claude Max", "Claude Pro", ...), or null when there is no usable login.
+ */
+export function getExistingClaudeLoginLabel(): string | null {
+  try {
+    if (!isAnthropicAuthEnabled()) return null
+    if (!getClaudeAIOAuthTokens()) return null
+    return getSubscriptionName()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Should the standalone TUI offer SuperAI's provider setup at this start?
+ * Yes when it has never been offered on this machine, no external key/token
+ * or Bedrock/Vertex/Foundry config is in effect (i.e. the session would use a
+ * Claude.ai login or nothing), and the provider is not owned by the desktop
+ * host that spawned us.
+ */
+export function shouldOfferSuperaiProviderSetup(): boolean {
+  if (hasCompletedSuperaiSetup()) return false
+  if (isEnvTruthy(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) return false
+  try {
+    return isAnthropicAuthEnabled()
+  } catch {
+    return false
+  }
+}
 
 /** Stable string ids for Select values. */
 export function setupOptionId(option: SetupOption): string {
@@ -65,7 +147,9 @@ export function describeSetupOption(option: SetupOption): string {
     case 'custom':
       return 'any Anthropic-compatible base URL + API key'
     case 'claude-login':
-      return 'Claude subscription, Console, or Bedrock / Foundry / Vertex'
+      return option.loggedInAs
+        ? `keep using the ${option.loggedInAs} account already signed in on this machine`
+        : 'Claude subscription, Console, or Bedrock / Foundry / Vertex'
   }
 }
 
@@ -110,7 +194,7 @@ export async function listSetupOptions(
   }
   options.push({ kind: 'anthropic-key' })
   options.push({ kind: 'custom' })
-  options.push({ kind: 'claude-login' })
+  options.push({ kind: 'claude-login', loggedInAs: getExistingClaudeLoginLabel() })
   return options
 }
 

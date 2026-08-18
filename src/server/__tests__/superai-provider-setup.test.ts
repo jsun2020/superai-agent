@@ -3,9 +3,11 @@
  * that replaces Claude Code's "Select login method" menu.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { readFileSync } from 'fs'
 import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
+import { hasThirdPartyAnthropicBaseUrl } from '../../utils/auth.js'
 import { getCustomApiKeyStatus } from '../../utils/config.js'
 import {
   activateSavedProvider,
@@ -13,10 +15,14 @@ import {
   applyProviderEnv,
   approveApiKey,
   describeSetupOption,
+  hasCompletedSuperaiSetup,
   listSetupOptions,
   listSetupPresets,
+  markSuperaiSetupCompleted,
   saveAndActivateNewProvider,
   setupOptionId,
+  shouldOfferSuperaiProviderSetup,
+  superaiSetupMarkerPath,
 } from '../../utils/superaiProviderSetup.js'
 import { ProviderService } from '../services/providerService.js'
 
@@ -219,5 +225,66 @@ describe('applyProviderEnv', () => {
     expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     expect(process.env.ANTHROPIC_BASE_URL).toBe('https://x.example')
     expect(process.env.ANTHROPIC_MODEL).toBeUndefined()
+  })
+})
+
+describe("once-per-machine gate (independent of Claude Code's hasCompletedOnboarding)", () => {
+  test('offered on a machine that only has a Claude.ai login, then never again once marked', () => {
+    delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    // A Claude login and no SuperAI provider: exactly the case where the TUI
+    // used to run silently on the Claude account.
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-oauth-token'
+    try {
+      expect(hasCompletedSuperaiSetup()).toBe(false)
+      expect(shouldOfferSuperaiProviderSetup()).toBe(true)
+      markSuperaiSetupCompleted('claude-account')
+      expect(hasCompletedSuperaiSetup()).toBe(true)
+      expect(shouldOfferSuperaiProviderSetup()).toBe(false)
+    } finally {
+      delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+    }
+    const marker = JSON.parse(readFileSync(superaiSetupMarkerPath(), 'utf-8')) as { choice: string }
+    expect(marker.choice).toBe('claude-account')
+    expect(path.normalize(superaiSetupMarkerPath())).toBe(path.join(tmpDir, 'superai', 'tui-setup.json'))
+  })
+
+  test('not offered when the desktop host owns the provider env', () => {
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    try {
+      expect(shouldOfferSuperaiProviderSetup()).toBe(false)
+    } finally {
+      delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    }
+  })
+
+  test('not offered when an external key already routes to a third-party endpoint', () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
+    process.env.ANTHROPIC_API_KEY = 'sk-external'
+    expect(shouldOfferSuperaiProviderSetup()).toBe(false)
+  })
+
+  test('the Claude option carries no account name when no Claude.ai login exists here', async () => {
+    const options = await listSetupOptions()
+    const claude = options[options.length - 1]!
+    expect(claude).toEqual({ kind: 'claude-login', loggedInAs: null })
+    expect(describeSetupOption(claude)).toBe('Claude subscription, Console, or Bedrock / Foundry / Vertex')
+    expect(describeSetupOption({ kind: 'claude-login', loggedInAs: 'Claude Max' })).toBe(
+      'keep using the Claude Max account already signed in on this machine',
+    )
+  })
+})
+
+describe('hasThirdPartyAnthropicBaseUrl (silences the "auth conflict" notice for a SuperAI provider)', () => {
+  test('third-party host -> true; Anthropic hosts, unset or malformed -> false', () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.minimaxi.com/anthropic'
+    expect(hasThirdPartyAnthropicBaseUrl()).toBe(true)
+    process.env.ANTHROPIC_BASE_URL = 'https://api.anthropic.com'
+    expect(hasThirdPartyAnthropicBaseUrl()).toBe(false)
+    process.env.ANTHROPIC_BASE_URL = 'https://eu.api.anthropic.com/v1'
+    expect(hasThirdPartyAnthropicBaseUrl()).toBe(false)
+    process.env.ANTHROPIC_BASE_URL = 'not a url'
+    expect(hasThirdPartyAnthropicBaseUrl()).toBe(false)
+    delete process.env.ANTHROPIC_BASE_URL
+    expect(hasThirdPartyAnthropicBaseUrl()).toBe(false)
   })
 })

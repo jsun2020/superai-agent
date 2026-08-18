@@ -29,6 +29,7 @@ import type { PermissionMode } from './utils/permissions/PermissionMode.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
 import { getSettingsWithAllErrors } from './utils/settings/allErrors.js';
 import { hasAutoModeOptIn, hasSkipDangerousModePermissionPrompt } from './utils/settings/settings.js';
+import { shouldOfferSuperaiProviderSetup } from './utils/superaiProviderSetup.js';
 export function completeOnboarding(): void {
   saveGlobalConfig(current => ({
     ...current,
@@ -118,6 +119,20 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
       completeOnboarding();
       void done();
     }} />, {
+      onChangeAppState
+    });
+  } else if (shouldOfferSuperaiProviderSetup()) {
+    // SuperAI shares ~/.claude/ with Claude Code, so on a machine where Claude
+    // Code was already onboarded (hasCompletedOnboarding) the full onboarding
+    // above never runs - and a Claude.ai login found there would silently be
+    // used. Offer SuperAI's own provider setup once per machine (marker in
+    // ~/.claude/superai/tui-setup.json) whenever the session would otherwise
+    // run on a Claude.ai login or on nothing at all.
+    onboardingShown = true;
+    const {
+      SuperaiProviderSetup
+    } = await import('./components/SuperaiProviderSetup.js');
+    await showSetupDialog(root, done => <SuperaiProviderSetup onDone={() => void done()} />, {
       onChangeAppState
     });
   }

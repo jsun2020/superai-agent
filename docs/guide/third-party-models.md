@@ -15,9 +15,12 @@ superai-agent ──Anthropic协议──▶ LiteLLM Proxy ──OpenAI协议─
 
 ## 方式零：在终端里直接配置（首次启动 / `/provider`）
 
-便携版 `superai-agent-tui.exe`（或 `superai.exe`）第一次启动、且机器上没有任何
-API Key / Claude 登录时，会显示 SuperAI 的模型提供商配置，而不是 Claude Code 的
-"Select login method" 登录菜单：
+便携版 `superai-agent-tui.exe`（或 `superai.exe`）第一次启动时会显示 SuperAI 的模型提供商配置，
+而不是 Claude Code 的 "Select login method" 登录菜单。这一步每台机器只问一次（记录在
+`~/.claude/superai/tui-setup.json`，删掉即可再次询问），并且不受 Claude Code 自己的首次启动状态影响：
+即使这台机器已经登录了 Claude 账号（Max / Pro），只要没有激活 SuperAI 提供商，也会先问一次，
+最后一项显示为 "Keep Claude Max account"（继续用已登录的账号）。不需要 /logout，也不需要重启：
+选好提供商后当前会话立即改用它，顶部会显示 `MiniMax-M2.7 · API · api.minimaxi.com` 而不是 `Claude Max`。
 
 ```
 Select a provider:

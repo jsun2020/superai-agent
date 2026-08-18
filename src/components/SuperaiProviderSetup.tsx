@@ -21,6 +21,7 @@ import {
   ANTHROPIC_OFFICIAL_BASE_URL,
   describeSetupOption,
   listSetupOptions,
+  markSuperaiSetupCompleted,
   saveAndActivateNewProvider,
   setupOptionId,
   type SetupOption,
@@ -114,7 +115,7 @@ function optionLabel(option: SetupOption): string {
     case 'custom':
       return 'Custom endpoint'
     case 'claude-login':
-      return 'Claude account login'
+      return option.loggedInAs ? `Keep ${option.loggedInAs} account` : 'Claude account login'
   }
 }
 
@@ -138,7 +139,7 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
       .catch((err: unknown) => {
         logError(err)
         if (cancelled) return
-        setOptions([{ kind: 'custom' }, { kind: 'claude-login' }])
+        setOptions([{ kind: 'custom' }, { kind: 'claude-login', loggedInAs: null }])
         setStage({ kind: 'choose' })
       })
     return () => {
@@ -196,6 +197,7 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
           apiKey: d.apiKey,
           model: d.model,
         })
+        markSuperaiSetupCompleted(`provider:${d.presetId}`)
         onDone()
       } catch (err: unknown) {
         logError(err)
@@ -243,12 +245,22 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
       setHint(null)
       switch (option.kind) {
         case 'claude-login':
+          if (option.loggedInAs) {
+            // Already signed in on this machine: keeping that account needs no
+            // login flow. Remember the choice so the setup is not offered again.
+            markSuperaiSetupCompleted('claude-account')
+            onDone()
+            return
+          }
           setStage({ kind: 'claude-login' })
           return
         case 'saved': {
           setStage({ kind: 'saving' })
           void activateSavedProvider(option.provider.id)
-            .then(() => onDone())
+            .then(() => {
+              markSuperaiSetupCompleted(`saved:${option.provider.id}`)
+              onDone()
+            })
             .catch((err: unknown) => {
               logError(err)
               setStage({
@@ -340,6 +352,11 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
     [options],
   )
 
+  const existingLogin = useMemo(() => {
+    const claude = options.find(o => o.kind === 'claude-login')
+    return claude?.kind === 'claude-login' ? claude.loggedInAs : null
+  }, [options])
+
   const failedOptions = useMemo(
     () => [
       { label: 'Try again', value: 'retry' },
@@ -372,7 +389,14 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
   )
 
   if (stage.kind === 'claude-login') {
-    return <ConsoleOAuthFlow onDone={onDone} />
+    return (
+      <ConsoleOAuthFlow
+        onDone={() => {
+          markSuperaiSetupCompleted('claude-login')
+          onDone()
+        }}
+      />
+    )
   }
 
   const target = draft.name || 'the endpoint'
@@ -383,6 +407,13 @@ export function SuperaiProviderSetup({ onDone, onEditingChange }: Props): React.
         {PRODUCT_NAME} works with any Anthropic-compatible API. Configure a model provider to get
         started:
       </Text>
+      {existingLogin && stage.kind === 'choose' && (
+        <Text dimColor>
+          This machine is signed in to a {existingLogin} account, which the terminal would otherwise
+          use. Pick a provider below to use SuperAI's own API-key configuration instead, or keep the
+          account.
+        </Text>
+      )}
 
       {stage.kind === 'loading' && <Text dimColor>Loading providers...</Text>}
 

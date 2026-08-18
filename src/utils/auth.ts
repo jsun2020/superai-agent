@@ -97,6 +97,24 @@ function isManagedOAuthContext(): boolean {
 
 /** Whether we are supporting direct 1P auth. */
 // this code is closely related to getAuthTokenSource
+/**
+ * True when ANTHROPIC_BASE_URL points at a non-Anthropic host (a SuperAI
+ * provider such as MiniMax / DeepSeek / Yunwu, or any Anthropic-compatible
+ * proxy). A stored Claude.ai OAuth token cannot be used against such a host,
+ * so an API key configured for it is not in conflict with that login.
+ */
+export function hasThirdPartyAnthropicBaseUrl(): boolean {
+  const baseUrl = process.env.ANTHROPIC_BASE_URL
+  if (!baseUrl) return false
+  try {
+    const host = new URL(baseUrl).host
+    return host !== 'api.anthropic.com' && !host.endsWith('.anthropic.com')
+  } catch {
+    // malformed URL — treat as first-party
+    return false
+  }
+}
+
 export function isAnthropicAuthEnabled(): boolean {
   // --bare: API-key-only, never OAuth.
   if (isBareMode()) return false
@@ -117,17 +135,7 @@ export function isAnthropicAuthEnabled(): boolean {
   // tokens are not accepted there — sending Bearer <oauth-token> to the proxy
   // returns 401/429 "invalid token". Treat this as 3P so OAuth is disabled
   // and the request falls back to x-api-key from ANTHROPIC_API_KEY.
-  let isThirdPartyBaseUrl = false
-  const baseUrl = process.env.ANTHROPIC_BASE_URL
-  if (baseUrl) {
-    try {
-      const host = new URL(baseUrl).host
-      isThirdPartyBaseUrl =
-        host !== 'api.anthropic.com' && !host.endsWith('.anthropic.com')
-    } catch {
-      // malformed URL — leave isThirdPartyBaseUrl=false
-    }
-  }
+  const isThirdPartyBaseUrl = hasThirdPartyAnthropicBaseUrl()
 
   const is3P =
     isEnvTruthy(process.env.CLAUDE_CODE_USE_BEDROCK) ||
