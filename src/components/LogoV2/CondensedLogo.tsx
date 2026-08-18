@@ -16,8 +16,9 @@ import { AnimatedClawd } from './AnimatedClawd.js';
 import { Clawd } from './Clawd.js';
 import { GuestPassesUpsell, incrementGuestPassesSeenCount, useShowGuestPassesUpsell } from './GuestPassesUpsell.js';
 import { incrementOverageCreditUpsellSeenCount, OverageCreditUpsell, useShowOverageCreditUpsell } from './OverageCreditUpsell.js';
+import { PreviousSessionsHint } from './PreviousSessionsHint.js';
 export function CondensedLogo() {
-  const $ = _c(29);
+  const $ = _c(32);
   const {
     columns
   } = useTerminalSize();
@@ -138,14 +139,23 @@ export function CondensedLogo() {
   } else {
     t11 = $[22];
   }
+  let t13;
+  if ($[29] !== textWidth) {
+    t13 = <PreviousSessionsHint maxWidth={textWidth} />;
+    $[29] = textWidth;
+    $[30] = t13;
+  } else {
+    t13 = $[30];
+  }
   let t12;
-  if ($[23] !== t10 || $[24] !== t11 || $[25] !== t6 || $[26] !== t7 || $[27] !== t9) {
-    t12 = <OffscreenFreeze><Box flexDirection="row" gap={2} alignItems="center">{t4}<Box flexDirection="column">{t6}{t7}{t9}{t10}{t11}</Box></Box></OffscreenFreeze>;
+  if ($[23] !== t10 || $[24] !== t11 || $[25] !== t6 || $[26] !== t7 || $[27] !== t9 || $[31] !== t13) {
+    t12 = <OffscreenFreeze><Box flexDirection="row" gap={2} alignItems="center">{t4}<Box flexDirection="column">{t6}{t7}{t9}{t13}{t10}{t11}</Box></Box></OffscreenFreeze>;
     $[23] = t10;
     $[24] = t11;
     $[25] = t6;
     $[26] = t7;
     $[27] = t9;
+    $[31] = t13;
     $[28] = t12;
   } else {
     t12 = $[28];

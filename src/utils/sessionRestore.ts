@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle'
+import { markResumedAtLaunch } from './previousSessionHint.js'
 import type { UUID } from 'crypto'
 import { dirname } from 'path'
 import {
@@ -431,6 +432,10 @@ export async function processResumedConversation(
       result.messages.push(createSystemMessage(modeWarning, 'warning'))
     }
   }
+
+  // The condensed startup header hints "superai -c continues the last
+  // session" — meaningless once we ARE that session (or a fork of it).
+  markResumedAtLaunch()
 
   // Reuse the resumed session's ID unless --fork-session is specified
   if (!opts.forkSession) {

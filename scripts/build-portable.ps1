@@ -2,7 +2,13 @@
 param(
   [switch]$SkipInstall,
   [switch]$SkipZip,
-  [switch]$SkipOfficeCLI
+  [switch]$SkipOfficeCLI,
+  # Skip step 1 (Tauri + sidecar build) and only re-stage the folder/zip from
+  # the artifacts already present - e.g. after a staging failure.
+  [switch]$StageOnly,
+  # Stage somewhere other than dist\portable - use this while something is
+  # RUNNING from dist\portable (the staging step refuses to wipe a folder in use).
+  [string]$OutDir
 )
 
 # ============================================================
@@ -31,7 +37,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
 $desktopDir = Join-Path $repoRoot 'desktop'
 $targetTriple = 'x86_64-pc-windows-msvc'
-$portableDir = Join-Path $repoRoot 'dist\portable'
+$portableDir = if ($OutDir) { [System.IO.Path]::GetFullPath($OutDir) } else { Join-Path $repoRoot 'dist\portable' }
 $tauriTargetExe = Join-Path $desktopDir "src-tauri\target\$targetTriple\release\superai-agent-desktop.exe"
 $binariesDir = Join-Path $desktopDir 'src-tauri\binaries'
 
@@ -110,6 +116,9 @@ if (-not $SkipInstall) {
 $portableTauriCfg = Join-Path ([System.IO.Path]::GetTempPath()) 'superai-agent.tauri.portable.windows.json'
 @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Path $portableTauriCfg -Encoding UTF8
 
+if ($StageOnly) {
+  Write-Step 'Skipping Tauri/sidecar build (-StageOnly) - staging existing artifacts'
+} else {
 Write-Step "Building Tauri Desktop (--no-bundle, no MSI/NSIS)"
 Push-Location $desktopDir
 try {
@@ -120,6 +129,7 @@ try {
   Pop-Location
   if (Test-Path $portableTauriCfg) { Remove-Item -LiteralPath $portableTauriCfg -Force }
 }
+}
 
 if (-not (Test-Path $tauriTargetExe)) {
   throw "Expected Tauri exe not found at $tauriTargetExe"
@@ -127,7 +137,23 @@ if (-not (Test-Path $tauriTargetExe)) {
 
 # 2) Stage the portable folder.
 Write-Step "Staging portable folder at $portableDir"
-if (Test-Path $portableDir) { Remove-Item -LiteralPath $portableDir -Recurse -Force }
+if (Test-Path $portableDir) {
+  # Remove-Item -Recurse is not atomic: aimed at a folder somebody is RUNNING
+  # from, it deletes everything up to the first locked exe and leaves a gutted
+  # package behind (that happened). Refuse while anything runs from the folder,
+  # and otherwise rename the tree aside first so a failure destroys nothing.
+  $inUse = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.Path -and $_.Path.StartsWith($portableDir, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+  if ($inUse.Count -gt 0) {
+    $who = ($inUse | ForEach-Object { "$($_.ProcessName).exe (pid $($_.Id))" }) -join ', '
+    throw ("Refusing to wipe $portableDir - in use by $who. Close them, or build to another " +
+      "folder with -OutDir <path> and copy the new files over afterwards.")
+  }
+  $aside = "$portableDir.old-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+  Rename-Item -LiteralPath $portableDir -NewName (Split-Path -Leaf $aside)
+  Remove-Item -LiteralPath $aside -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
 
 Copy-Item -LiteralPath $tauriTargetExe -Destination (Join-Path $portableDir 'SuperAIAgent.exe')
@@ -223,6 +249,16 @@ Usage:
   3. Double-click SuperAIAgent.exe to launch the desktop UI.
      - Or run superai.exe from a terminal for the text UI.
      - Closing the window kills every spawned child process automatically.
+
+Sessions (terminal UI):
+  Every conversation is saved per folder under %USERPROFILE%\.claude\projects.
+  A plain "superai" always starts a NEW session, and its header shows a
+  "Last session ..." line when this folder already has one.
+      superai -c              continue the most recent session in this folder
+      superai -r              pick a session from a list (or: /resume inside)
+      /compact                shrink the current context to a summary to save
+                              tokens; it also happens automatically when the
+                              context window fills up (/context shows usage)
 
 DO NOT double-click superai-agent-sidecar.exe - it is an internal helper that
 SuperAIAgent.exe spawns automatically. Running it directly will print a

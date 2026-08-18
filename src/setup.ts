@@ -393,11 +393,14 @@ export async function setup(
   // Pre-fetch data for Logo v2 - await to ensure it's ready before logo renders.
   // --bare / SIMPLE: skip — release notes are interactive-UI display data,
   // and getRecentActivity() reads up to 10 session JSONL files.
+  // SuperAI: the condensed header (every ordinary interactive start) shows a
+  // "Last session ...: superai -c continues it" hint from the same cache, so
+  // load it for interactive sessions too, not only when release notes show.
   if (!isBareMode()) {
     const { hasReleaseNotes } = await checkForReleaseNotes(
       getGlobalConfig().lastReleaseNotesSeen,
     )
-    if (hasReleaseNotes) {
+    if (hasReleaseNotes || !getIsNonInteractiveSession()) {
       await getRecentActivity()
     }
   }
