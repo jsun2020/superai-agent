@@ -13,6 +13,35 @@ superai-agent ──Anthropic协议──▶ LiteLLM Proxy ──OpenAI协议─
 
 ---
 
+## 方式零：在终端里直接配置（首次启动 / `/provider`）
+
+便携版 `superai-agent-tui.exe`（或 `superai.exe`）第一次启动、且机器上没有任何
+API Key / Claude 登录时，会显示 SuperAI 的模型提供商配置，而不是 Claude Code 的
+"Select login method" 登录菜单：
+
+```
+Select a provider:
+❯ 1. MiniMax (saved)       api.minimaxi.com · MiniMax-M2.7     <- 桌面端已保存的提供商
+  2. DeepSeek              api.deepseek.com · deepseek-chat
+  3. Zhipu GLM             open.bigmodel.cn · glm-5.1
+  4. Kimi                  api.moonshot.cn · kimi-k2.6
+  5. MiniMax               api.minimaxi.com · MiniMax-M2.7
+  6. Anthropic API key     api.anthropic.com · Console API key
+  7. Custom endpoint       any Anthropic-compatible base URL + API key
+  8. Claude account login  Claude subscription, Console, or Bedrock / Foundry / Vertex
+```
+
+选择预设后输入 API Key（隐藏显示）、确认模型 ID，程序会先用一次真实请求验证再保存；
+验证失败会显示上游返回的错误原文，并提供「重试 / 仍然保存 / 重新选择」。配置写入
+`~/.claude/superai/providers.json` 与 `settings.json`，与桌面端的「模型提供商」共用同一份存储，
+当前会话立即生效，无需重启。会话中随时可以用 `/provider` 重新配置或切换；
+`/login` 仍然是 Claude 账号（订阅 / Console）的登录流程。
+
+> OpenAI 协议（`openai_chat` / `openai_responses`）的提供商需要桌面端 sidecar 的协议转换代理，
+> 在终端列表中会显示为不可选。
+
+---
+
 ## 方式一：LiteLLM 代理（推荐）
 
 [LiteLLM](https://github.com/BerriAI/litellm) 是一个支持 100+ LLM 的统一代理网关（41k+ GitHub Stars），原生支持接收 Anthropic 协议请求。
