@@ -1,12 +1,12 @@
 # 功能详解
 
-> 桌面端核心功能模块一览。
+> SuperAI Agent 桌面端核心功能模块一览。
 
 ---
 
 ## 聊天引擎
 
-![任务列表与工具调用](../images/desktop_ui/04_tasktodo_list.png)
+![对话](../images/desktop_ui/01_full_ui.png)
 
 聊天引擎是桌面端核心，负责消息收发、流式渲染和工具交互。
 
@@ -54,8 +54,6 @@
 ---
 
 ## 代码展示
-
-![Write 工具 Diff 视图](../images/desktop_ui/02_edit_code.png)
 
 ### CodeViewer
 
@@ -112,28 +110,57 @@
 
 ---
 
-## 提供商管理
+## 服务商管理
 
-![提供商设置](../images/desktop_ui/05_settings.png)
+![服务商设置](../images/desktop_ui/05_settings.png)
 
-在设置 → Providers 标签页管理 AI 提供商。
+设置 → 服务商 管理模型来源；设为 **Default** 的服务商被所有新会话使用。
 
-### 预设
+### 类型
 
-点击「添加提供商」从预设快速创建：Anthropic、OpenAI、OpenRouter、Ollama、Azure OpenAI、Google AI 等。预设自动填充 Base URL 和 API 格式。
+| 类型 | 说明 |
+|------|------|
+| Claude Official | Anthropic 官方账号 OAuth 登录，无需 API Key |
+| OpenAI Official | 通过本机 `codex` CLI 复用 ChatGPT 登录（`runtime: codex` 会话），无需 API Key |
+| 预设 | DeepSeek / 智谱 GLM / Kimi / MiniMax：选择后 Base URL 与默认模型已填好，只需 API Key |
+| 自定义 | 任意 Anthropic 兼容 Base URL + API Key + 模型名 |
 
 ### 配置项
 
 | 字段 | 说明 |
 |------|------|
-| API Key | 密钥（密码输入） |
+| API Key | 密钥（密码输入，接口返回时脱敏） |
 | Base URL | API 地址 |
-| API 格式 | `anthropic` / `openai_chat` / `openai_responses` |
+| API 格式 | `anthropic` / `openai_chat` / `openai_responses`（后两种经桌面端本地代理翻译，仅桌面端可用） |
 | 模型映射 | main / haiku / sonnet / opus 对应的实际模型名 |
 
 ### 连接测试
 
-两步验证：连接性 + 模型可用性，结果以 Toast 通知展示。
+「Test」发送一条真实请求验证连接性与模型可用性，结果以 Toast 展示。
+
+### 与终端 UI 共用
+
+配置写入 `~/.claude/superai/providers.json` + `settings.json`。终端 UI `superai.exe` 首次启动会列出同一份服务商让用户选择（也可用 `/provider` 切换），任一处的修改对另一处下次启动生效。
+
+---
+
+## Work 模式：角色与连接器
+
+![模式切换](../images/desktop_ui/02_mode_switcher.png)
+
+- **模式开关**（`ModeSwitcher`）：Work / Code，选择持久化在本地；会话创建时记录所属模式
+- **角色**：Work 模式内置 Assistant（收件箱 / 日历 / 会议）、Sales（客户 / 跟进 / CRM）、Analyst（表格 / 周期报表）、office（文档）；定义文件在 `~/.superai/`，可编辑
+- **连接器目录**（`ConnectorCatalog`，设置 → MCP）：飞书 / Lark、Microsoft 365 一键接入，其余陆续开放；每个连接器落地为一条普通 MCP 服务器配置
+- **对外操作确认**：Work 模式下会改变外部系统的 MCP 调用（发送、创建、删除…）无论权限模式如何都会弹出确认
+- **定时任务模板**：周报、日程整理等 Work 场景的任务模板
+
+![MCP 与连接器](../images/desktop_ui/10_settings_mcp.png)
+
+---
+
+## 办公文档 agent
+
+内置 `office` agent 处理 Word / Excel / PowerPoint / PDF 及图片、视频任务，以 [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) 为首选引擎（Windows 便携包与 macOS 包已内置二进制，`vendor/` 目录随包分发），不可用时回退到 Python 工具链。
 
 ---
 
@@ -182,13 +209,17 @@
 
 ![IM 适配器设置](../images/desktop_ui/07_im.png)
 
-设置 → Adapters 标签页，配置 Telegram / 飞书接入。
+设置 → IM 接入 标签页，配置飞书 / Telegram / 微信公众号接入；保存后适配器进程自动重启。
 
 ### 配置
 
+**飞书**: App ID + App Secret + 加密密钥（可选）+ 验证 Token（可选）+ 允许的用户 open_id
+
 **Telegram**: Bot Token + 允许的用户 ID
 
-**飞书**: App ID + App Secret + 加密密钥 + 验证 Token + 允许的用户 open_id + 流式卡片开关
+**微信公众号**: 见 [IM 文档](../im/)
+
+**Default Project**: IM 会话默认工作目录（留空则 Bot 先询问）
 
 ### 用户配对
 
@@ -198,7 +229,7 @@
 
 | 命令 | 效果 |
 |------|------|
-| 直接发文本 | 与 Claude Code 对话 |
+| 直接发文本 | 与 Agent 对话 |
 | `/new [项目]` 或 `新会话` | 开始新会话 |
 | `/projects` 或 `项目列表` | 查看最近项目 |
 | `/stop` 或 `停止` | 停止生成 |
@@ -213,7 +244,7 @@
 
 设置 → Computer Use 标签页，查看和配置 Computer Use 功能状态。
 
-`ComputerUseSettings` 页面展示：平台信息、Python 环境、venv 状态、依赖安装情况、权限配置。
+页面检查 Python 3、虚拟环境、依赖三项状态，「Install Environment」一键安装、「Recheck Status」复查；macOS 另需辅助功能权限。Windows 上还有「已授权应用」列表（限制可控制的程序，已过滤语言包 / MSI 组件 / 驱动工具等不可控条目）和只读的 `read_ui_elements` 工具（列出焦点窗口的可交互元素及坐标，加速定位）。详见 [功能指南](../features/computer-use.md)。
 
 ---
 
@@ -250,15 +281,17 @@
 
 右下角固定通知，四种类型（success/error/warning/info），自动消失 + 手动关闭。
 
-### 自动更新
+### 应用更新
 
-`UpdateChecker` 组件：启动后检查 GitHub Releases，有新版本时弹出更新提示，支持自动下载安装重启。
+![关于与更新](../images/desktop_ui/12_settings_about.png)
+
+`updateStore` + `tauri-plugin-updater`：启动后静默检查一次，「设置 → 关于 → Check now」手动检查；更新清单是本仓库 GitHub Release 的 `latest.json`，有新版本时下载安装包、停止 sidecar、安装并重启。检查失败时错误里会写明原因（尚未发布 Release / 仓库不公开 / 网络不可达）。
 
 ---
 
 ## 国际化
 
-支持中文 (`zh`) 和英文 (`en`)，设置 → 通用中切换，`localStorage` 持久化。
+支持中文 (`zh`) 和英文 (`en`)，设置 → 通用中切换，`localStorage` 持久化。主题支持浅色 / 深色 / 跟随系统。
 
 Key 命名空间：`common.*`、`sidebar.*`、`chat.*`、`settings.*`、`status.*`、`titlebar.*` 等。
 

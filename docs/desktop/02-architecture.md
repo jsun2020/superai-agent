@@ -1,6 +1,6 @@
 # 架构设计
 
-> 从 Tauri 窗口到 CLI 子进程，桌面端的三层通信架构。
+> 从 Tauri 窗口到 CLI 子进程，SuperAI Agent 桌面端的三层通信架构。桌面端与终端 UI（`superai.exe`）共用同一个 Agent 内核、同一份服务商配置和同一套会话存储。
 
 ---
 
@@ -269,9 +269,13 @@ ws://127.0.0.1:{port}/ws/{sessionId}
 |------|------|
 | 标签页状态 | `localStorage` |
 | 语言偏好 | `localStorage` |
-| 会话数据 | Server JSONL (`~/.claude/sessions/`) |
+| 会话数据 | JSONL 转录，按工作目录分组存放在 `~/.claude/projects/<目录编码>/`（与终端 UI 相同，因此 `superai -c` / `/resume` 也能打开桌面端创建的会话） |
+| 服务商 | `~/.claude/superai/providers.json`（列表 + 当前默认）与 `~/.claude/superai/settings.json`（写入进程环境的 `ANTHROPIC_*` 变量），由 `ProviderService` 维护，桌面端与终端 UI 共用 |
+| Work / Code 模式 | 前端 `localStorage`；每个会话的元数据带 `mode` 字段 |
+| Work 角色 / 连接器目录 | `~/.superai/`（首次启动从内置默认值写入，用户可编辑） |
 | 设置 | Server API |
 | 适配器配置 | `~/.claude/adapters.json` |
+| 定时任务 | Server 持久化，只在桌面端运行时调度 |
 
 ---
 
@@ -283,9 +287,11 @@ Server 内置代理层（`src/server/proxy/`），统一不同 AI 提供商的 A
 
 | 格式 | 典型提供商 |
 |------|-----------|
-| `anthropic` | Anthropic、OpenRouter、MiniMax |
-| `openai_chat` | OpenAI、DeepSeek、Ollama |
+| `anthropic` | Anthropic 官方、DeepSeek / 智谱 GLM / Kimi / MiniMax 的 Anthropic 兼容端点、OpenRouter |
+| `openai_chat` | OpenAI Chat Completions 形态的服务、Ollama |
 | `openai_responses` | OpenAI Responses API |
+
+`anthropic` 格式的服务商由 CLI 直接请求（终端 UI 也能用）；另外两种由 Server 的本地代理翻译，因此只在桌面端（或手动启动 Server）时可用。**OpenAI Codex** 是特殊的 `runtime: codex` 会话，Server 通过本机 `codex` CLI 复用 ChatGPT 登录态，不经过代理。
 
 ### 模型映射
 
@@ -295,7 +301,7 @@ Server 内置代理层（`src/server/proxy/`），统一不同 AI 提供商的 A
 
 ## 适配器架构
 
-适配器系统让 Telegram/飞书等 IM 平台接入 Claude Code。
+适配器系统让飞书 / Telegram / 微信公众号等 IM 平台远程驱动同一套 Agent。
 
 ```
 IM 平台 → Adapter 进程 → HTTP + WebSocket → Server → CLI
@@ -375,5 +381,26 @@ src/server/                           # 服务端（项目根目录）
 adapters/                             # IM 适配器
 ├── common/                          #   共享模块 (8 个)
 ├── telegram/                        #   Telegram Bot
-└── feishu/                          #   飞书 Bot
+├── feishu/                          #   飞书 Bot
+└── wechat/                          #   微信公众号
+
+scripts/
+├── build-portable.ps1               # Windows 便携包：Tauri exe + sidecar/TUI 二进制 + vendor\officecli.exe -> dist/portable + zip
+└── release.ts                       # 统一升版：desktop/package.json、tauri.conf.json、Cargo.toml、preload.ts（终端 UI 版本）+ git tag
 ```
+
+---
+
+## SuperAI 特有部分
+
+在上游桌面端骨架之上，SuperAI Agent 增加了：
+
+| 模块 | 位置 | 说明 |
+|------|------|------|
+| Work / Code 模式 | `desktop/src/components/layout/ModeSwitcher.tsx`、`src/server/services/workMode.ts` / `workRoles.ts` / `workConnectors.ts` / `workplaceDefaults.ts` | 模式开关、角色与连接器目录（`~/.superai/`）、Work 模式的对外操作确认策略 |
+| 连接器目录 | `desktop/src/components/settings/ConnectorCatalog.tsx` | MCP 设置页的一键接入卡片（飞书 / Lark、Microsoft 365 …），落地为普通 MCP 配置 |
+| 服务商引导 | `src/utils/superaiProviderSetup.ts`、`src/components/SuperaiProviderSetup.tsx` | 终端 UI 首次启动 / `/provider` 使用与桌面端相同的服务商存储 |
+| Codex 服务商 | `desktop/src/components/settings/CodexOfficialLogin.tsx`、`src/server/services/conversationService.ts`（`runtime: codex` 分支） | 复用本机 `codex` CLI 登录 |
+| 办公文档 agent | `src/tools/AgentTool/built-in/officeAgent.ts`、`src/utils/vendorBinDir.ts`（把 exe 旁的 `vendor\` 加入 PATH） | OfficeCLI 优先的 Word / Excel / PowerPoint / PDF 处理，便携包与 macOS 包内置二进制 |
+| Computer Use（Windows） | `src/vendor/computer-use-mcp/` | 授权应用列表、`read_ui_elements` 只读定位工具 |
+| 应用更新 | `desktop/src/stores/updateStore.ts`、`tauri.conf.json` `plugins.updater` | 读取本仓库 GitHub Release 的 `latest.json` |
