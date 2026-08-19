@@ -46,6 +46,17 @@ Last session 2h ago: fix the provider setup · superai -c continues it · /resum
 
 `superai -c` 恢复的是完整对话（连同之前压缩过的摘要），恢复后随时可以 `/compact`。
 
+## Q: 公司网络里报 `Unable to connect to API: Self-signed certificate detected` / 服务商测试显示 `self signed certificate in certificate chain`？
+
+这是企业代理在做 TLS 解密（用公司自己的 CA 重新签发每个网站的证书）。浏览器能打开是因为公司 CA 装在 Windows / macOS 的系统证书库里；而 Bun 运行时默认只认自带的 Mozilla 根证书列表，所以桌面端、终端 UI、IM 适配器发出的 HTTPS 请求都会被拒。「网络代理」页的「测试」只做 CONNECT 握手、不校验证书，所以它显示 200 并不矛盾。
+
+从 v0.2.18 起默认**同时信任系统证书库**：
+
+- 终端 UI / 会话里的 API 调用：自动把 Windows / macOS 证书库里的 CA 追加到信任列表（`SUPERAI_USE_SYSTEM_CA=0` 可关闭）。
+- 桌面端：`SuperAIAgent.exe` 启动时把系统证书库导出到 `~/.claude/superai/system-ca.pem`，并以 `NODE_EXTRA_CA_CERTS` 传给两个 sidecar（API 服务 + IM 适配器）；如果你自己在环境变量或 `~/.claude/superai/settings.json` 的 `env` 里设置了 `NODE_EXTRA_CA_CERTS`，以你的为准。
+
+仍然失败时：把公司根证书导出成 PEM，设置环境变量 `NODE_EXTRA_CA_CERTS=<pem 路径>` 后重启应用；或者让 IT 把 SuperAI 使用的 API 域名加入代理的 TLS 解密白名单。
+
 ## Q: 怎么接入 OpenAI / DeepSeek / Ollama 等非 Anthropic 模型？
 
 本项目只支持 Anthropic 协议。如果模型供应商不直接支持 Anthropic 协议，需要用 [LiteLLM](https://github.com/BerriAI/litellm) 等代理做协议转换（OpenAI → Anthropic）。

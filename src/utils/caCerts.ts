@@ -1,7 +1,28 @@
 import memoize from 'lodash-es/memoize.js'
 import { logForDebugging } from './debug.js'
-import { hasNodeOption } from './envUtils.js'
+import { hasNodeOption, isEnvTruthy } from './envUtils.js'
 import { getFsImplementation } from './fsOperations.js'
+
+/**
+ * SuperAI: trust the operating system's certificate store by default on
+ * Windows and macOS (in addition to the bundled Mozilla roots).
+ *
+ * Corporate networks terminate TLS at a proxy that re-signs every site with a
+ * company CA. Browsers and curl accept it because the CA is in the OS store;
+ * Bun's fetch only knows the bundled Mozilla list, so every API call died with
+ * "Self-signed certificate detected" unless the user hand-exported the CA and
+ * set NODE_EXTRA_CA_CERTS. Behaving like the OS is what users expect.
+ *
+ * Opt out with SUPERAI_USE_SYSTEM_CA=0 (or NODE_USE_SYSTEM_CA=0); force on
+ * elsewhere with =1. `--use-system-ca` in NODE_OPTIONS keeps its upstream
+ * meaning (system store INSTEAD of the bundled roots).
+ */
+export function shouldTrustOsCertStore(): boolean {
+  const explicit =
+    process.env.SUPERAI_USE_SYSTEM_CA ?? process.env.NODE_USE_SYSTEM_CA
+  if (explicit !== undefined && explicit !== '') return isEnvTruthy(explicit)
+  return process.platform === 'win32' || process.platform === 'darwin'
+}
 
 /**
  * Load CA certificates for TLS connections.
@@ -30,13 +51,14 @@ export const getCACertificates = memoize((): string[] | undefined => {
     hasNodeOption('--use-system-ca') || hasNodeOption('--use-openssl-ca')
 
   const extraCertsPath = process.env.NODE_EXTRA_CA_CERTS
+  const trustOsStore = shouldTrustOsCertStore()
 
   logForDebugging(
-    `CA certs: useSystemCA=${useSystemCA}, extraCertsPath=${extraCertsPath}`,
+    `CA certs: useSystemCA=${useSystemCA}, extraCertsPath=${extraCertsPath}, trustOsStore=${trustOsStore}`,
   )
 
-  // If neither is set, return undefined (use runtime defaults, no override)
-  if (!useSystemCA && !extraCertsPath) {
+  // If nothing asks for a custom list, return undefined (use runtime defaults, no override)
+  if (!useSystemCA && !extraCertsPath && !trustOsStore) {
     return undefined
   }
 
@@ -81,6 +103,28 @@ export const getCACertificates = memoize((): string[] | undefined => {
     logForDebugging(
       `CA certs: Loaded ${certs.length} bundled root certificates as base`,
     )
+    if (trustOsStore) {
+      // SuperAI default: bundled roots PLUS the OS store, so a corporate
+      // TLS-inspecting proxy's CA (present in the OS store) is trusted too.
+      const getCACerts = (
+        tls as typeof tls & { getCACertificates?: (type: string) => string[] }
+      ).getCACertificates
+      let systemCAs: string[] | undefined
+      try {
+        systemCAs = getCACerts?.('system')
+      } catch (error) {
+        logForDebugging(`CA certs: OS store unavailable: ${error}`)
+      }
+      if (systemCAs && systemCAs.length > 0) {
+        certs.push(...systemCAs)
+        logForDebugging(
+          `CA certs: Appended ${systemCAs.length} OS trust store certificates`,
+        )
+      } else if (!extraCertsPath) {
+        // Nothing to add over the runtime default — keep the fast path.
+        return undefined
+      }
+    }
   }
 
   // Append extra certs from file

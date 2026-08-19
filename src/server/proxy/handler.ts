@@ -10,6 +10,7 @@
  */
 
 import { ProviderService } from '../services/providerService.js'
+import { getTLSFetchOptions } from '../../utils/mtls.js'
 import { anthropicToOpenaiChat } from './transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from './transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from './transform/openaiChatToAnthropic.js'
@@ -120,6 +121,9 @@ async function handleOpenaiChat(
     },
     body: JSON.stringify(transformed),
     signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
+    // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
+    // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
+    ...getTLSFetchOptions(),
   })
 
   if (!upstream.ok) {
@@ -177,6 +181,9 @@ async function handleOpenaiResponses(
     },
     body: JSON.stringify(transformed),
     signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
+    // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
+    // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
+    ...getTLSFetchOptions(),
   })
 
   if (!upstream.ok) {

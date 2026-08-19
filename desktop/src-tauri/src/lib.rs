@@ -664,6 +664,92 @@ fn read_managed_proxy_env() -> HashMap<String, String> {
     out
 }
 
+/// Export the operating system's trusted CA certificates to a PEM file and
+/// return the env that makes the Bun sidecars trust them.
+///
+/// Corporate networks terminate TLS at a proxy that re-signs every site with
+/// a company CA. That CA lives in the OS store (browsers work), but Bun only
+/// trusts its bundled Mozilla roots, so every provider test / chat / IM call
+/// from the sidecars failed with "self signed certificate in certificate
+/// chain". Bun reads NODE_EXTRA_CA_CERTS ONLY at process boot (setting it
+/// inside the sidecar later is a no-op), so it must be in the spawn env -
+/// exactly like HTTPS_PROXY above.
+///
+/// Respected overrides: a NODE_EXTRA_CA_CERTS already in the desktop's own
+/// environment or in ~/.claude/superai/settings.json wins (the user chose a
+/// bundle); SUPERAI_USE_SYSTEM_CA=0 disables the export. The file is written
+/// to ~/.claude/superai/system-ca.pem and refreshed on every start.
+fn read_system_ca_env() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if std::env::var_os("NODE_EXTRA_CA_CERTS").is_some_and(|v| !v.is_empty()) {
+        return out;
+    }
+    if let Ok(v) = std::env::var("SUPERAI_USE_SYSTEM_CA") {
+        let v = v.trim().to_ascii_lowercase();
+        if matches!(v.as_str(), "0" | "false" | "no" | "off") {
+            return out;
+        }
+    }
+    let Some(home) = home_dir() else {
+        return out;
+    };
+    let superai_dir = home.join(".claude").join("superai");
+    // A NODE_EXTRA_CA_CERTS the user put into settings.json env wins.
+    if let Ok(raw) = std::fs::read_to_string(superai_dir.join("settings.json")) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(v) = parsed
+                .get("env")
+                .and_then(|e| e.get("NODE_EXTRA_CA_CERTS"))
+                .and_then(|v| v.as_str())
+            {
+                if !v.is_empty() {
+                    out.insert("NODE_EXTRA_CA_CERTS".to_string(), v.to_string());
+                    return out;
+                }
+            }
+        }
+    }
+
+    let result = rustls_native_certs::load_native_certs();
+    if result.certs.is_empty() {
+        if !result.errors.is_empty() {
+            println!(
+                "[desktop] OS certificate store unavailable ({} errors); sidecars use bundled roots",
+                result.errors.len()
+            );
+        }
+        return out;
+    }
+    let mut pem = String::new();
+    for cert in &result.certs {
+        pem.push_str("-----BEGIN CERTIFICATE-----\n");
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, cert.as_ref());
+        for chunk in b64.as_bytes().chunks(64) {
+            pem.push_str(str::from_utf8(chunk).unwrap_or(""));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+    }
+    if std::fs::create_dir_all(&superai_dir).is_err() {
+        return out;
+    }
+    let pem_path = superai_dir.join("system-ca.pem");
+    if let Err(err) = std::fs::write(&pem_path, pem) {
+        println!("[desktop] could not write {}: {err}", pem_path.display());
+        return out;
+    }
+    println!(
+        "[desktop] exported {} OS CA certificates to {} (NODE_EXTRA_CA_CERTS for sidecars)",
+        result.certs.len(),
+        pem_path.display()
+    );
+    out.insert(
+        "NODE_EXTRA_CA_CERTS".to_string(),
+        pem_path.to_string_lossy().to_string(),
+    );
+    out
+}
+
 fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     let host = "127.0.0.1";
     let port = reserve_local_port()?;
@@ -672,10 +758,11 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     let app_root_arg = app_root.to_string_lossy().to_string();
 
     // 单一合并 sidecar：第一个参数选 server / cli / adapters 模式。
-    let proxy_env = read_managed_proxy_env();
+    let mut proxy_env = read_managed_proxy_env();
+    proxy_env.extend(read_system_ca_env());
     if !proxy_env.is_empty() {
         let keys: Vec<&str> = proxy_env.keys().map(|s| s.as_str()).collect();
-        println!("[desktop] injecting proxy env into server sidecar: {:?}", keys);
+        println!("[desktop] injecting proxy/TLS env into server sidecar: {:?}", keys);
     }
     let mut sidecar = app
         .shell()
@@ -766,7 +853,8 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
         server_http_url.clone()
     };
 
-    let proxy_env = read_managed_proxy_env();
+    let mut proxy_env = read_managed_proxy_env();
+    proxy_env.extend(read_system_ca_env());
     let mut sidecar = app
         .shell()
         .sidecar("superai-agent-sidecar")

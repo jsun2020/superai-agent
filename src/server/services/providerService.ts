@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
+import { getTLSFetchOptions } from '../../utils/mtls.js'
 import { anthropicToOpenaiChat } from '../proxy/transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from '../proxy/transform/openaiChatToAnthropic.js'
@@ -534,6 +535,9 @@ export class ProviderService {
         headers,
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30000),
+        // OS trust store / NODE_EXTRA_CA_CERTS - same TLS trust as the CLI, so
+        // "Test" fails or passes for the same reasons a session would.
+        ...getTLSFetchOptions(),
       })
 
       const latencyMs = Date.now() - start
@@ -596,6 +600,7 @@ export class ProviderService {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(transformedBody),
         signal: AbortSignal.timeout(30000),
+        ...getTLSFetchOptions(),
       })
 
       if (!response.ok) {
