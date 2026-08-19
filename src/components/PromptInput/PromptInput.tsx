@@ -78,7 +78,7 @@ import { transitionPermissionMode } from '../../utils/permissions/permissionSetu
 import { getPlatform } from '../../utils/platform.js';
 import type { ProcessUserInputContext } from '../../utils/processUserInput/processUserInput.js';
 import { editPromptInEditor } from '../../utils/promptEditor.js';
-import { hasAutoModeOptIn } from '../../utils/settings/settings.js';
+import { hasAutoModeOptIn, hasSkipDangerousModePermissionPrompt } from '../../utils/settings/settings.js';
 import { findBtwTriggerPositions } from '../../utils/sideQuestion.js';
 import { findSlashCommandPositions } from '../../utils/suggestions/commandSuggestions.js';
 import { findSlackChannelPositions, getKnownChannelsVersion, hasSlackMcpServer, subscribeKnownChannels } from '../../utils/suggestions/slackChannelSuggestions.js';
@@ -94,6 +94,7 @@ import { findThinkingTriggerPositions, getRainbowColor, isUltrathinkEnabled } fr
 import { findTokenBudgetPositions } from '../../utils/tokenBudget.js';
 import { findUltraplanTriggerPositions, findUltrareviewTriggerPositions } from '../../utils/ultraplan/keyword.js';
 import { AutoModeOptInDialog } from '../AutoModeOptInDialog.js';
+import { BypassPermissionsConfirmDialog } from '../BypassPermissionsConfirmDialog.js';
 import { BridgeDialog } from '../BridgeDialog.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
 import { getVisibleAgentTasks, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
@@ -409,6 +410,11 @@ function PromptInput({
   const [showAutoModeOptIn, setShowAutoModeOptIn] = useState(false);
   const [previousModeBeforeAuto, setPreviousModeBeforeAuto] = useState<PermissionMode | null>(null);
   const autoModeOptInTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // SuperAI: first Shift+Tab into "bypass permissions" in a session shows a
+  // confirmation (same copy as the startup warning) before the mode is applied.
+  const [showBypassConfirm, setShowBypassConfirm] = useState(false);
+  const [previousModeBeforeBypass, setPreviousModeBeforeBypass] = useState<PermissionMode | null>(null);
+  const bypassConfirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if cursor is on the first line of input
   const isCursorOnFirstLine = useMemo(() => {
@@ -1446,6 +1452,47 @@ function PromptInput({
     logForDebugging(`[auto-mode] handleCycleMode: currentMode=${toolPermissionContext.mode} isAutoModeAvailable=${toolPermissionContext.isAutoModeAvailable} showAutoModeOptIn=${showAutoModeOptIn} timeoutPending=${!!autoModeOptInTimeoutRef.current}`);
     const nextMode = getNextPermissionMode(toolPermissionContext, teamContext);
 
+    // SuperAI: entering bypass permissions for the first time on this machine
+    // (not yet accepted at startup or in an earlier session) -> show the
+    // warning first; only the footer label flips until the user accepts.
+    if (nextMode === 'bypassPermissions' && toolPermissionContext.mode !== 'bypassPermissions' && !hasSkipDangerousModePermissionPrompt() && !viewingAgentTaskId) {
+      setPreviousModeBeforeBypass(toolPermissionContext.mode);
+      setAppState(prev => ({
+        ...prev,
+        toolPermissionContext: {
+          ...prev.toolPermissionContext,
+          mode: 'bypassPermissions'
+        }
+      }));
+      setToolPermissionContext({
+        ...toolPermissionContext,
+        mode: 'bypassPermissions'
+      });
+      if (bypassConfirmTimeoutRef.current) {
+        clearTimeout(bypassConfirmTimeoutRef.current);
+      }
+      bypassConfirmTimeoutRef.current = setTimeout(() => {
+        setShowBypassConfirm(true);
+        bypassConfirmTimeoutRef.current = null;
+      }, 400);
+      if (helpOpen) {
+        setHelpOpen(false);
+      }
+      return;
+    }
+    // Cycling away while the bypass confirmation is pending/showing = not
+    // accepted: the label was only provisional, so fall back to the previous
+    // mode and continue the cycle from there.
+    if (showBypassConfirm || bypassConfirmTimeoutRef.current) {
+      setShowBypassConfirm(false);
+      if (bypassConfirmTimeoutRef.current) {
+        clearTimeout(bypassConfirmTimeoutRef.current);
+        bypassConfirmTimeoutRef.current = null;
+      }
+      setPreviousModeBeforeBypass(null);
+      // Fall through - mode label is 'bypassPermissions', cyclePermissionMode below goes to 'default'.
+    }
+
     // Check if user is entering auto mode for the first time. Gated on the
     // persistent settings flag (hasAutoModeOptIn) rather than the broader
     // hasAutoModeOptInAnySource so that --enable-auto-mode users still see
@@ -1550,7 +1597,55 @@ function PromptInput({
     if (helpOpen) {
       setHelpOpen(false);
     }
-  }, [toolPermissionContext, teamContext, viewingAgentTaskId, viewedTeammate, setAppState, setToolPermissionContext, helpOpen, showAutoModeOptIn]);
+  }, [toolPermissionContext, teamContext, viewingAgentTaskId, viewedTeammate, setAppState, setToolPermissionContext, helpOpen, showAutoModeOptIn, showBypassConfirm]);
+
+  // SuperAI: bypass confirmation accepted -> apply the real transition.
+  const handleBypassConfirmAccept = useCallback(() => {
+    setShowBypassConfirm(false);
+    const fromMode = previousModeBeforeBypass ?? toolPermissionContext.mode;
+    setPreviousModeBeforeBypass(null);
+    const prepared = transitionPermissionMode(fromMode, 'bypassPermissions', toolPermissionContext);
+    logEvent('tengu_mode_cycle', {
+      to: 'bypassPermissions' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+    });
+    setAppState(prev => ({
+      ...prev,
+      toolPermissionContext: {
+        ...prepared,
+        mode: 'bypassPermissions'
+      }
+    }));
+    setToolPermissionContext({
+      ...prepared,
+      mode: 'bypassPermissions'
+    });
+    syncTeammateMode('bypassPermissions', teamContext?.teamName);
+  }, [previousModeBeforeBypass, toolPermissionContext, setAppState, setToolPermissionContext, teamContext]);
+
+  // SuperAI: bypass confirmation declined -> revert, and keep bypass out of
+  // the cycle for the rest of this session (so Shift+Tab does not re-ask).
+  const handleBypassConfirmDecline = useCallback(() => {
+    setShowBypassConfirm(false);
+    if (bypassConfirmTimeoutRef.current) {
+      clearTimeout(bypassConfirmTimeoutRef.current);
+      bypassConfirmTimeoutRef.current = null;
+    }
+    const revertTo = previousModeBeforeBypass ?? 'default';
+    setPreviousModeBeforeBypass(null);
+    setAppState(prev => ({
+      ...prev,
+      toolPermissionContext: {
+        ...prev.toolPermissionContext,
+        mode: revertTo,
+        isBypassPermissionsModeAvailable: false
+      }
+    }));
+    setToolPermissionContext({
+      ...toolPermissionContext,
+      mode: revertTo,
+      isBypassPermissionsModeAvailable: false
+    });
+  }, [previousModeBeforeBypass, toolPermissionContext, setAppState, setToolPermissionContext]);
 
   // Handler for auto mode opt-in dialog acceptance
   const handleAutoModeOptInAccept = useCallback(() => {
@@ -2115,7 +2210,10 @@ function PromptInput({
   // Must be called before early returns below to satisfy rules-of-hooks.
   // Memoized so the portal useEffect doesn't churn on every PromptInput render.
   const autoModeOptInDialog = useMemo(() => feature('TRANSCRIPT_CLASSIFIER') && showAutoModeOptIn ? <AutoModeOptInDialog onAccept={handleAutoModeOptInAccept} onDecline={handleAutoModeOptInDecline} /> : null, [showAutoModeOptIn, handleAutoModeOptInAccept, handleAutoModeOptInDecline]);
-  useSetPromptOverlayDialog(isFullscreenEnvEnabled() ? autoModeOptInDialog : null);
+  const bypassConfirmDialog = useMemo(() => showBypassConfirm ? <BypassPermissionsConfirmDialog onAccept={handleBypassConfirmAccept} onDecline={handleBypassConfirmDecline} /> : null, [showBypassConfirm, handleBypassConfirmAccept, handleBypassConfirmDecline]);
+  // autoModeOptInDialog is literally `false` when its feature flag is off, so `??` would keep it.
+  const modeDialog = autoModeOptInDialog || bypassConfirmDialog || null;
+  useSetPromptOverlayDialog(isFullscreenEnvEnabled() ? modeDialog : null);
   if (showBashesDialog) {
     return <BackgroundTasksDialog onDone={() => setShowBashesDialog(false)} toolUseContext={getToolUseContext(messages, [], new AbortController(), mainLoopModel)} initialDetailTaskId={typeof showBashesDialog === 'string' ? showBashesDialog : undefined} />;
   }
@@ -2267,7 +2365,7 @@ function PromptInput({
           </Box>
         </Box>}
       <PromptInputFooter apiKeyStatus={apiKeyStatus} debug={debug} exitMessage={exitMessage} vimMode={isVimModeEnabled() ? vimMode : undefined} mode={mode} autoUpdaterResult={autoUpdaterResult} isAutoUpdating={isAutoUpdating} verbose={verbose} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={setIsAutoUpdating} suggestions={suggestions} selectedSuggestion={selectedSuggestion} maxColumnWidth={maxColumnWidth} toolPermissionContext={effectiveToolPermissionContext} helpOpen={helpOpen} suppressHint={input.length > 0} isLoading={isLoading} tasksSelected={tasksSelected} teamsSelected={teamsSelected} bridgeSelected={bridgeSelected} tmuxSelected={tmuxSelected} teammateFooterIndex={teammateFooterIndex} ideSelection={ideSelection} mcpClients={mcpClients} isPasting={isPasting} isInputWrapped={isInputWrapped} messages={messages} isSearching={isSearchingHistory} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={isFullscreenEnvEnabled() ? handleOpenTasksDialog : undefined} />
-      {isFullscreenEnvEnabled() ? null : autoModeOptInDialog}
+      {isFullscreenEnvEnabled() ? null : modeDialog}
       {isFullscreenEnvEnabled() ?
     // position=absolute takes zero layout height so the spinner
     // doesn't shift when a notification appears/disappears. Yoga
@@ -2285,7 +2383,7 @@ function PromptInput({
     // bottom row. Keeping Notifications mounted prevents AutoUpdater's
     // initial-check effect from re-firing on every slash-completion
     // toggle (PR#22413).
-    <Box position="absolute" marginTop={briefOwnsGap ? -2 : -1} height={suggestions.length === 0 && !showAutoModeOptIn ? 1 : 0} width="100%" paddingLeft={2} paddingRight={1} flexDirection="column" justifyContent="flex-end" overflow="hidden">
+    <Box position="absolute" marginTop={briefOwnsGap ? -2 : -1} height={suggestions.length === 0 && !showAutoModeOptIn && !showBypassConfirm ? 1 : 0} width="100%" paddingLeft={2} paddingRight={1} flexDirection="column" justifyContent="flex-end" overflow="hidden">
           <Notifications apiKeyStatus={apiKeyStatus} autoUpdaterResult={autoUpdaterResult} debug={debug} isAutoUpdating={isAutoUpdating} verbose={verbose} messages={messages} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={setIsAutoUpdating} ideSelection={ideSelection} mcpClients={mcpClients} isInputWrapped={isInputWrapped} />
         </Box> : null}
     </Box>;

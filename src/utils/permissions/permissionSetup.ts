@@ -13,6 +13,7 @@ import type {
 } from '../../Tool.js'
 import { getCwd } from '../cwd.js'
 import { isEnvTruthy } from '../envUtils.js'
+import { isBypassModeOfferedByDefault } from './bypassModeAvailability.js'
 import type { SettingSource } from '../settings/constants.js'
 import { SETTING_SOURCES } from '../settings/constants.js'
 import {
@@ -936,9 +937,14 @@ export async function initializeToolPermissionContext({
   const settings = getSettings_DEPRECATED() || {}
   const settingsDisableBypassPermissionsMode =
     settings.permissions?.disableBypassPermissionsMode === 'disable'
+  // SuperAI: bypass is in the Shift+Tab cycle by default (the first entry
+  // still goes through the warning dialog - see PromptInput handleCycleMode);
+  // settings `permissions.disableBypassPermissionsMode` and the Statsig gate
+  // still remove it, and SUPERAI_BYPASS_IN_CYCLE=0 restores the upstream rule.
   const isBypassPermissionsModeAvailable =
     (permissionMode === 'bypassPermissions' ||
-      allowDangerouslySkipPermissions) &&
+      allowDangerouslySkipPermissions ||
+      isBypassModeOfferedByDefault()) &&
     !growthBookDisableBypassPermissionsMode &&
     !settingsDisableBypassPermissionsMode
 

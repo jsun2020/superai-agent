@@ -57,6 +57,14 @@ Last session 2h ago: fix the provider setup · superai -c continues it · /resum
 
 仍然失败时：把公司根证书导出成 PEM，设置环境变量 `NODE_EXTRA_CA_CERTS=<pem 路径>` 后重启应用；或者让 IT 把 SuperAI 使用的 API 域名加入代理的 TLS 解密白名单。
 
+## Q: 终端 UI 里怎么切换权限模式？为什么只有 plan mode / accept edits 两种？
+
+在输入框处按 **Shift+Tab**（Windows 便携版为 **Alt+M**）循环切换：`默认（逐个确认）→ accept edits on → plan mode on → bypass permissions on → 默认`。
+
+`bypass permissions on` 从 v0.2.19 起默认就在循环里（此前只有以 `--dangerously-skip-permissions` 启动时才会出现）。第一次切换进去会弹出与启动时相同的警告对话框：选「Yes, I accept」后写入 `~/.claude/settings.json` 的 `skipDangerousModePermissionPrompt`，以后不再询问；选「No, stay in the current mode」则回到原模式，并且本次会话不再把它放进循环。
+
+不想让它出现在循环里：设置环境变量 `SUPERAI_BYPASS_IN_CYCLE=0`，或在 `~/.claude/settings.json` 里写 `"permissions": { "disableBypassPermissionsMode": "disable" }`（后者同时禁用 `--dangerously-skip-permissions`）。Unix 上以 root 运行且不在沙箱中时不会提供。
+
 ## Q: 怎么接入 OpenAI / DeepSeek / Ollama 等非 Anthropic 模型？
 
 本项目只支持 Anthropic 协议。如果模型供应商不直接支持 Anthropic 协议，需要用 [LiteLLM](https://github.com/BerriAI/litellm) 等代理做协议转换（OpenAI → Anthropic）。
