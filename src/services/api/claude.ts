@@ -2571,6 +2571,9 @@ async function* queryModel(
       const m: AssistantMessage = {
         message: {
           ...result,
+          // Some Anthropic-compatible providers omit usage entirely —
+          // normalize so downstream consumers never see usage: undefined.
+          usage: updateUsage(EMPTY_USAGE, result.usage),
           content: normalizeContentFromAPI(
             result.content,
             tools,
@@ -2668,6 +2671,8 @@ async function* queryModel(
         const m: AssistantMessage = {
           message: {
             ...result,
+            // See fallback above — providers may omit usage entirely.
+            usage: updateUsage(EMPTY_USAGE, result.usage),
             content: normalizeContentFromAPI(
               result.content,
               tools,
@@ -2818,15 +2823,13 @@ async function* queryModel(
     // message_delta handler before any yield. Fallback pushes to newMessages
     // then yields, so tracking must be here to survive .return() at the yield.
     if (fallbackMessage) {
-      const fallbackUsage = fallbackMessage.message.usage
-      usage = updateUsage(EMPTY_USAGE, fallbackUsage)
+      // Anthropic-compatible providers (e.g. MiniMax) may return a response
+      // with no usage object at all — normalize through updateUsage so the
+      // cost accounting below never dereferences undefined.
+      usage = updateUsage(EMPTY_USAGE, fallbackMessage.message.usage)
       stopReason = fallbackMessage.message.stop_reason
-      const fallbackCost = calculateUSDCost(resolvedModel, fallbackUsage)
-      costUSD += addToTotalSessionCost(
-        fallbackCost,
-        fallbackUsage,
-        options.model,
-      )
+      const fallbackCost = calculateUSDCost(resolvedModel, usage)
+      costUSD += addToTotalSessionCost(fallbackCost, usage, options.model)
     }
   }
 
