@@ -133,9 +133,13 @@ for (const file of VERSION_FILES) {
   console.log(`  Updated: ${path.relative(root, file.path)}`)
 }
 
-// Regenerate Cargo.lock
-console.log('\n  Updating Cargo.lock...')
-await run(['cargo', 'generate-lockfile'], path.join(root, 'desktop/src-tauri'))
+// Update Cargo.lock for the version bump ONLY. Never `cargo generate-lockfile`
+// here: it ignores the existing lock and re-resolves every dependency to the
+// latest compatible version, which can pull the `tauri` crate ahead of the
+// pinned @tauri-apps/api npm package and fail CI with a version mismatch
+// (this broke the v0.2.19 release on its first attempt).
+console.log('\n  Updating Cargo.lock (workspace version only)...')
+await run(['cargo', 'update', '--workspace'], path.join(root, 'desktop/src-tauri'))
 
 // Git commit + tag
 console.log('  Creating git commit...')
