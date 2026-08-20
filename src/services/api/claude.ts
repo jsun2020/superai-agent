@@ -2600,13 +2600,19 @@ async function* queryModel(
         // in between) gave us nothing usable. Yield a clear, retryable error
         // instead of an empty assistant message — an empty one surfaces as a
         // cryptic "[ede_diagnostic] ... last_content_type=none" in the GUI
-        // and as a silent mid-task stop in the TUI.
+        // and as a silent mid-task stop in the TUI. The diagnostic tail names
+        // what actually came back (provider soft-error fields like MiniMax's
+        // base_resp, proxy-fabricated bodies) so one report pins the culprit.
+        const diagnostic = describeEmptyFallbackResponse(
+          result,
+          errorMessage(streamingError),
+        )
         logForDebugging(
-          'Non-streaming fallback returned a response with zero content blocks',
+          `Non-streaming fallback returned a response with zero content blocks (${diagnostic})`,
           { level: 'error' },
         )
         yield createAssistantAPIErrorMessage({
-          content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.`,
+          content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again. [diagnostic: ${diagnostic}]`,
           error: 'server_error',
         })
       } else {
@@ -2708,12 +2714,16 @@ async function* queryModel(
         fallbackMessage = m
         if (m.message.content.length === 0) {
           // See the identical guard in the streaming-failure fallback above.
+          const diagnostic = describeEmptyFallbackResponse(
+            result,
+            '404 on stream creation',
+          )
           logForDebugging(
-            'Non-streaming fallback returned a response with zero content blocks',
+            `Non-streaming fallback returned a response with zero content blocks (${diagnostic})`,
             { level: 'error' },
           )
           yield createAssistantAPIErrorMessage({
-            content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.`,
+            content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again. [diagnostic: ${diagnostic}]`,
             error: 'server_error',
           })
         } else {
@@ -3421,6 +3431,65 @@ export function adjustParamsForNonStreaming<
     ...adjustedParams,
     max_tokens: cappedMaxTokens,
   }
+}
+
+// Top-level keys of a spec-compliant Anthropic message response. Anything else
+// on an empty fallback response is forensic gold — e.g. MiniMax reports errors
+// as HTTP 200 + `base_resp: {status_code, status_msg}`, and corporate proxies
+// can substitute their own JSON bodies (which the SDK resolves without
+// validating, and normalizeContentFromAPI turns a missing `content` into []).
+const ANTHROPIC_MESSAGE_KEYS = new Set([
+  'id',
+  'type',
+  'role',
+  'model',
+  'content',
+  'stop_reason',
+  'stop_sequence',
+  'usage',
+  'container',
+  'context_management',
+])
+
+/**
+ * Builds a compact, bounded diagnostic for a non-streaming fallback response
+ * that carried zero content blocks. Shown in the user-facing error so a single
+ * report/screenshot identifies WHAT came back (provider soft-error field,
+ * proxy-fabricated body, genuine empty message) without needing a debug log.
+ */
+export function describeEmptyFallbackResponse(
+  result: BetaMessage,
+  streamErrorSummary: string,
+): string {
+  const raw = result as unknown as Record<string, unknown>
+  const keys = Object.keys(raw)
+  const extras = keys.filter(k => !ANTHROPIC_MESSAGE_KEYS.has(k))
+  let extraDetail = ''
+  if (extras.length > 0) {
+    extraDetail = extras
+      .map(k => {
+        try {
+          return `${k}=${JSON.stringify(raw[k])}`
+        } catch {
+          return `${k}=<unserializable>`
+        }
+      })
+      .join(' ')
+    if (extraDetail.length > 200) extraDetail = `${extraDetail.slice(0, 200)}...`
+  }
+  const usage = raw.usage as
+    | { input_tokens?: unknown; output_tokens?: unknown }
+    | undefined
+  const parts = [
+    `stream_error=${streamErrorSummary.replace(/\s+/g, ' ').slice(0, 120)}`,
+    `response_keys=${keys.join(',') || '(none)'}`,
+    `stop_reason=${String(raw.stop_reason ?? 'null')}`,
+    usage
+      ? `usage=in:${usage.input_tokens ?? '?'},out:${usage.output_tokens ?? '?'}`
+      : 'usage=absent',
+  ]
+  if (extraDetail) parts.push(`extra ${extraDetail}`)
+  return parts.join('; ')
 }
 
 function isMaxTokensCapEnabled(): boolean {
