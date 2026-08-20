@@ -2603,16 +2603,16 @@ async function* queryModel(
         // and as a silent mid-task stop in the TUI. The diagnostic tail names
         // what actually came back (provider soft-error fields like MiniMax's
         // base_resp, proxy-fabricated bodies) so one report pins the culprit.
-        const diagnostic = describeEmptyFallbackResponse(
+        const content = buildEmptyFallbackErrorMessage(
           result,
           errorMessage(streamingError),
         )
         logForDebugging(
-          `Non-streaming fallback returned a response with zero content blocks (${diagnostic})`,
+          `Non-streaming fallback returned a response with zero content blocks: ${content}`,
           { level: 'error' },
         )
         yield createAssistantAPIErrorMessage({
-          content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again. [diagnostic: ${diagnostic}]`,
+          content,
           error: 'server_error',
         })
       } else {
@@ -2714,16 +2714,16 @@ async function* queryModel(
         fallbackMessage = m
         if (m.message.content.length === 0) {
           // See the identical guard in the streaming-failure fallback above.
-          const diagnostic = describeEmptyFallbackResponse(
+          const content = buildEmptyFallbackErrorMessage(
             result,
             '404 on stream creation',
           )
           logForDebugging(
-            `Non-streaming fallback returned a response with zero content blocks (${diagnostic})`,
+            `Non-streaming fallback returned a response with zero content blocks: ${content}`,
             { level: 'error' },
           )
           yield createAssistantAPIErrorMessage({
-            content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again. [diagnostic: ${diagnostic}]`,
+            content,
             error: 'server_error',
           })
         } else {
@@ -3450,6 +3450,50 @@ const ANTHROPIC_MESSAGE_KEYS = new Set([
   'container',
   'context_management',
 ])
+
+/**
+ * Recovers the raw non-JSON body the SDK returned, if that is what happened.
+ * The Anthropic SDK resolves to the response TEXT (rather than a parsed message
+ * object) whenever the response content-type is not JSON — which is exactly what
+ * an intercepting proxy, firewall or captive portal produces when it substitutes
+ * its own page for the API response.
+ */
+function getNonJsonFallbackBody(result: BetaMessage): string | null {
+  const raw = result as unknown
+  if (typeof raw === 'string') return raw
+  return null
+}
+
+/**
+ * True when a non-JSON fallback body looks like an HTML document, i.e. a network
+ * appliance answered with a web page instead of the API.
+ */
+function looksLikeHtml(body: string): boolean {
+  return /^\s*(<!doctype html|<html\b|<head\b)/i.test(body)
+}
+
+/**
+ * Builds the user-facing error for a non-streaming fallback that carried zero
+ * content blocks. The headline names the actual failure mode — an intercepted
+ * request reads completely differently to the user than a provider hiccup — and
+ * the bounded diagnostic tail identifies the culprit from a single screenshot.
+ */
+export function buildEmptyFallbackErrorMessage(
+  result: BetaMessage,
+  streamErrorSummary: string,
+  url?: string,
+): string {
+  const diagnostic = describeEmptyFallbackResponse(result, streamErrorSummary)
+  const body = getNonJsonFallbackBody(result)
+  const target = url ? ` to ${url}` : ''
+  const headline =
+    body !== null
+      ? looksLikeHtml(body)
+        ? `The network returned an HTML page instead of a model response. A proxy, firewall or captive portal is intercepting requests${target} — the page text is below. This is a network configuration issue, not a provider outage.`
+        : `The network returned a non-JSON response instead of a model response, which usually means something between this machine and the provider rewrote the reply${target}. The body is below.`
+      : 'The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.'
+  return `${API_ERROR_MESSAGE_PREFIX}: ${headline} [diagnostic: ${diagnostic}]`
+}
 
 /**
  * Builds a compact, bounded diagnostic for a non-streaming fallback response

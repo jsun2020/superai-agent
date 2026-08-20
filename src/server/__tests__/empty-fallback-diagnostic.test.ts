@@ -7,7 +7,10 @@
  */
 import { describe, expect, test } from 'bun:test'
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
-import { describeEmptyFallbackResponse } from '../../services/api/claude.js'
+import {
+  buildEmptyFallbackErrorMessage,
+  describeEmptyFallbackResponse,
+} from '../../services/api/claude.js'
 
 function asBetaMessage(obj: Record<string, unknown>): BetaMessage {
   return obj as unknown as BetaMessage
@@ -78,6 +81,7 @@ describe('describeEmptyFallbackResponse', () => {
   })
 
   test('bounds oversized extras and stream error text', () => {
+    // (kept below with the other bounding cases)
     const diag = describeEmptyFallbackResponse(
       asBetaMessage({
         content: [],
@@ -91,5 +95,56 @@ describe('describeEmptyFallbackResponse', () => {
     expect(diag).not.toContain('\n')
     const streamPart = diag.split(';')[0]
     expect(streamPart.length).toBeLessThanOrEqual('stream_error='.length + 120)
+  })
+})
+
+describe('buildEmptyFallbackErrorMessage', () => {
+  // Verbatim shape observed on the corporate Win11 machine: the SDK resolved to
+  // the response TEXT because the content-type was not JSON, and the text was an
+  // interception page.
+  const INTERCEPT_PAGE =
+    '<html><head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n<title>Access Denied</title></head><body>Request blocked by the security gateway.</body></html>'
+
+  test('names interception, not a provider outage, for an HTML body', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      INTERCEPT_PAGE as unknown as BetaMessage,
+      'InvalidHTTPResponse fetching "https://api.deepseek.com/anthropic/v1/messages?beta=true"',
+      'https://api.deepseek.com/anthropic/v1/messages',
+    )
+    expect(msg).toContain('HTML page instead of a model response')
+    expect(msg).toContain('intercepting requests')
+    expect(msg).toContain('https://api.deepseek.com/anthropic/v1/messages')
+    expect(msg).toContain('not a provider outage')
+    // the page's own words must survive into the message
+    expect(msg).toContain('Access Denied')
+    // and it must NOT claim the provider returned an empty response
+    expect(msg).not.toContain('provider returned an empty response')
+  })
+
+  test('distinguishes a non-HTML non-JSON body from an HTML one', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      'upstream connect error or disconnect/reset before headers' as unknown as BetaMessage,
+      'terminated',
+    )
+    expect(msg).toContain('non-JSON response')
+    expect(msg).not.toContain('HTML page instead')
+    expect(msg).toContain('upstream connect error')
+  })
+
+  test('keeps the original wording for a genuinely empty JSON message', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      asBetaMessage({
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        content: [],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 0 },
+      }),
+      'Stream ended without receiving any events',
+    )
+    expect(msg).toContain('provider returned an empty response')
+    expect(msg).not.toContain('HTML page')
+    expect(msg).toContain('stop_reason=end_turn')
   })
 })
