@@ -2594,7 +2594,24 @@ async function* queryModel(
       }
       newMessages.push(m)
       fallbackMessage = m
-      yield m
+      if (m.message.content.length === 0) {
+        // The fallback ran because streaming already failed; a fallback
+        // response with zero content blocks means the provider (or a proxy
+        // in between) gave us nothing usable. Yield a clear, retryable error
+        // instead of an empty assistant message — an empty one surfaces as a
+        // cryptic "[ede_diagnostic] ... last_content_type=none" in the GUI
+        // and as a silent mid-task stop in the TUI.
+        logForDebugging(
+          'Non-streaming fallback returned a response with zero content blocks',
+          { level: 'error' },
+        )
+        yield createAssistantAPIErrorMessage({
+          content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.`,
+          error: 'server_error',
+        })
+      } else {
+        yield m
+      }
     } finally {
       clearStreamIdleTimers()
     }
@@ -2689,7 +2706,19 @@ async function* queryModel(
         }
         newMessages.push(m)
         fallbackMessage = m
-        yield m
+        if (m.message.content.length === 0) {
+          // See the identical guard in the streaming-failure fallback above.
+          logForDebugging(
+            'Non-streaming fallback returned a response with zero content blocks',
+            { level: 'error' },
+          )
+          yield createAssistantAPIErrorMessage({
+            content: `${API_ERROR_MESSAGE_PREFIX}: The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.`,
+            error: 'server_error',
+          })
+        } else {
+          yield m
+        }
 
         // Continue to success logging below
       } catch (fallbackError) {
