@@ -3461,7 +3461,40 @@ export function describeEmptyFallbackResponse(
   result: BetaMessage,
   streamErrorSummary: string,
 ): string {
-  const raw = result as unknown as Record<string, unknown>
+  const collapse = (s: string) => s.replace(/\s+/g, ' ').trim()
+  const streamPart = `stream_error=${collapse(streamErrorSummary).slice(0, 120)}`
+
+  // The Anthropic SDK hands back the raw response BODY (a string) whenever the
+  // response's content-type isn't JSON — the signature of a proxy or gateway
+  // that answered with an HTML block page or a plain-text error rather than the
+  // API. Enumerating Object.keys() on such a body yields one entry per
+  // character, so report the text itself instead.
+  const rawUnknown = result as unknown
+  if (typeof rawUnknown !== 'object' || rawUnknown === null) {
+    const text = typeof rawUnknown === 'string' ? rawUnknown : String(rawUnknown)
+    return [
+      streamPart,
+      `body_type=${typeof rawUnknown} (not JSON)`,
+      `body_len=${text.length}`,
+      `body_text=${JSON.stringify(collapse(text).slice(0, 300))}`,
+    ].join('; ')
+  }
+  if (Array.isArray(rawUnknown)) {
+    let serialized: string
+    try {
+      serialized = JSON.stringify(rawUnknown)
+    } catch {
+      serialized = '<unserializable>'
+    }
+    return [
+      streamPart,
+      `body_type=array`,
+      `body_len=${rawUnknown.length}`,
+      `body_text=${JSON.stringify(collapse(serialized).slice(0, 300))}`,
+    ].join('; ')
+  }
+
+  const raw = rawUnknown as Record<string, unknown>
   const keys = Object.keys(raw)
   const extras = keys.filter(k => !ANTHROPIC_MESSAGE_KEYS.has(k))
   let extraDetail = ''
@@ -3480,9 +3513,13 @@ export function describeEmptyFallbackResponse(
   const usage = raw.usage as
     | { input_tokens?: unknown; output_tokens?: unknown }
     | undefined
+  const keyList =
+    keys.length > 20
+      ? `${keys.slice(0, 20).join(',')}(+${keys.length - 20} more)`
+      : keys.join(',')
   const parts = [
-    `stream_error=${streamErrorSummary.replace(/\s+/g, ' ').slice(0, 120)}`,
-    `response_keys=${keys.join(',') || '(none)'}`,
+    streamPart,
+    `response_keys=${keyList || '(none)'}`,
     `stop_reason=${String(raw.stop_reason ?? 'null')}`,
     usage
       ? `usage=in:${usage.input_tokens ?? '?'},out:${usage.output_tokens ?? '?'}`

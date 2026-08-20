@@ -49,6 +49,34 @@ describe('describeEmptyFallbackResponse', () => {
     expect(diag).toContain('extra object="chat.completion"')
   })
 
+  test('reports a non-JSON string body as text, not one key per character', () => {
+    // The SDK returns the raw body string when content-type isn't JSON — what a
+    // TLS-inspecting proxy produces when it substitutes its own block page.
+    const blockPage =
+      '<html><head><title>Access Denied</title></head><body>\n  Your request was blocked by the corporate gateway.\n</body></html>'
+    const diag = describeEmptyFallbackResponse(
+      blockPage as unknown as BetaMessage,
+      'InvalidHTTPResponse fetching "https://api.deepseek.com/anthropic/v1/messages?beta=true"',
+    )
+    expect(diag).toContain('body_type=string (not JSON)')
+    expect(diag).toContain(`body_len=${blockPage.length}`)
+    expect(diag).toContain('Access Denied')
+    expect(diag).toContain('blocked by the corporate gateway')
+    // must NOT degenerate into 0,1,2,3... character indices
+    expect(diag).not.toContain('response_keys=0,1,2')
+  })
+
+  test('bounds a huge key list instead of flooding the message', () => {
+    const many: Record<string, unknown> = {}
+    for (let i = 0; i < 200; i++) many[`k${i}`] = i
+    const diag = describeEmptyFallbackResponse(
+      asBetaMessage(many),
+      'terminated',
+    )
+    expect(diag).toContain('(+180 more)')
+    expect(diag.length).toBeLessThan(600)
+  })
+
   test('bounds oversized extras and stream error text', () => {
     const diag = describeEmptyFallbackResponse(
       asBetaMessage({

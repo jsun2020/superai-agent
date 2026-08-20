@@ -1,5 +1,6 @@
 import type { ChildProcess, ExecFileException } from 'child_process'
 import { execFile, spawn } from 'child_process'
+import { existsSync } from 'fs'
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import * as path from 'path'
@@ -60,6 +61,24 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
     process.platform === 'win32'
       ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')
       : path.resolve(rgRoot, `${process.arch}-${process.platform}`, 'rg')
+
+  // The vendored copy is not always there. A Bun-compiled binary resolves
+  // import.meta.url to a virtual root (B:\~BUN\root on Windows), so this path
+  // cannot exist in the portable build at all — spawning it produced a cryptic
+  // "ENOENT ... uv_spawn 'B:\~BUN\root\vendor\ripgrep\...'" for every Grep.
+  // Prefer a PATH lookup in that case: portable builds prepend their vendor/
+  // dir to PATH (registerVendorBinDir), so a vendored rg is found there too.
+  if (!existsSync(command)) {
+    const { cmd: systemPath } = findExecutable('rg', [])
+    if (systemPath !== 'rg') {
+      // SECURITY: spawn by bare name so the OS resolves it, per the note above.
+      return { mode: 'system', command: 'rg', args: [] }
+    }
+    logForDebugging(
+      `No ripgrep available: ${command} does not exist and 'rg' is not on PATH`,
+      { level: 'warn' },
+    )
+  }
 
   return { mode: 'builtin', command, args: [] }
 })
