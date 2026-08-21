@@ -187,10 +187,16 @@ export class ProxySettingsService {
    * we open a TCP socket ourselves, send `CONNECT <host>:443`, and parse
    * the proxy's first response line + `Proxy-Authenticate` headers.
    *
-   * Target: gstatic.com:443 — Chrome's connectivity-check origin. Almost
-   * always whitelisted by corporate proxies because Chrome itself probes
-   * it constantly. Real Anthropic / yunwu.ai endpoints are often blocked
-   * outright (which would mask an otherwise-working proxy as "broken").
+   * Target: open.feishu.cn:443. The previous target was gstatic.com — chosen
+   * because Chrome probes it constantly so corporate proxies whitelist it —
+   * but it is unreachable from this project's network, so a perfectly good
+   * proxy tested as "broken" exactly when the user needed the test most.
+   *
+   * Note what a PASS does and does not prove: it proves the proxy is reachable
+   * and accepted our credentials. It does NOT prove the proxy will let the
+   * *provider's* host through — a gateway can allow open.feishu.cn and still
+   * answer api.minimaxi.com with a block page. Use the provider connectivity
+   * test on the Providers page for that.
    */
   async testConfig(input: ProxyConfig): Promise<ProxyTestResult> {
     if (!input.enabled || !input.host.trim()) {
@@ -200,7 +206,7 @@ export class ProxySettingsService {
     if (port === null || !Number.isFinite(port) || port <= 0 || port > 65535) {
       return { ok: false, error: 'Proxy port must be 1-65535' }
     }
-    const targetHost = 'www.gstatic.com'
+    const targetHost = 'open.feishu.cn'
     const targetPort = 443
     const started = Date.now()
     return new Promise<ProxyTestResult>((resolve) => {

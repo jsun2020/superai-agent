@@ -3637,6 +3637,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "winreg 0.55.0",
 ]
 
 [[package]]

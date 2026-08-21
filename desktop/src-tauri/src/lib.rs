@@ -664,6 +664,224 @@ fn read_managed_proxy_env() -> HashMap<String, String> {
     out
 }
 
+fn map_has_proxy(env: &HashMap<String, String>) -> bool {
+    ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]
+        .iter()
+        .any(|k| env.get(*k).is_some_and(|v| !v.is_empty()))
+}
+
+/// What the operating system itself is configured to do about proxies.
+struct SystemProxy {
+    enabled: bool,
+    /// Raw `ProxyServer`: either `host:port` or `http=h:p;https=h:p;socks=h:p`.
+    server: String,
+    /// Raw `ProxyOverride`: `;`-separated, may contain the literal `<local>`.
+    bypass: String,
+    /// `AutoConfigURL` — a PAC script. Cannot be honored by an env var.
+    pac: String,
+}
+
+/// Pick the proxy URL for HTTPS traffic out of a Windows `ProxyServer` value.
+///
+/// Windows stores either a single `host:port` that applies to every protocol,
+/// or a per-scheme list `http=h:p;https=h:p;ftp=h:p;socks=h:p`. We want the
+/// https entry, falling back to http (corporate proxies almost always use one
+/// endpoint for both). socks/ftp entries are ignored: Bun's fetch proxy support
+/// is HTTP CONNECT, so pointing HTTPS_PROXY at a SOCKS port would fail in a
+/// far more confusing way than going direct.
+fn pick_windows_proxy_url(server: &str) -> Option<String> {
+    let server = server.trim();
+    if server.is_empty() {
+        return None;
+    }
+
+    let raw = if server.contains('=') {
+        let mut http = None;
+        let mut https = None;
+        for part in server.split(';') {
+            let Some((scheme, value)) = part.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            match scheme.trim().to_ascii_lowercase().as_str() {
+                "https" => https = Some(value),
+                "http" => http = Some(value),
+                _ => {}
+            }
+        }
+        https.or(http)?
+    } else {
+        server
+    };
+
+    let lower = raw.to_ascii_lowercase();
+    if lower.starts_with("socks") {
+        return None;
+    }
+    // Windows omits the scheme; the proxy endpoint itself speaks HTTP CONNECT.
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(raw.to_string())
+    } else {
+        Some(format!("http://{raw}"))
+    }
+}
+
+/// Translate a Windows `ProxyOverride` list into a NO_PROXY value.
+///
+/// `<local>` is Windows shorthand for "any hostname without a dot", which is
+/// not expressible in NO_PROXY; loopback is the part that actually matters to
+/// us (the CLI subprocess dials back to ws://127.0.0.1). Wildcard entries are
+/// normalized from Windows form `*.corp.com` to NO_PROXY form `.corp.com`.
+fn windows_bypass_to_no_proxy(bypass: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |entry: &str| {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return;
+        }
+        let normalized = entry.strip_prefix('*').unwrap_or(entry).to_string();
+        if normalized.is_empty() {
+            return;
+        }
+        if !out
+            .iter()
+            .any(|e: &String| e.eq_ignore_ascii_case(&normalized))
+        {
+            out.push(normalized);
+        }
+    };
+
+    for part in bypass.split([';', ',']) {
+        if part.trim().eq_ignore_ascii_case("<local>") {
+            continue;
+        }
+        push(part);
+    }
+    // Loopback is required regardless of what Windows says: the spawned CLI
+    // opens a WebSocket back to the local server and must not be proxied.
+    for entry in ["localhost", "127.0.0.1", "::1"] {
+        push(entry);
+    }
+
+    out.join(",")
+}
+
+#[cfg(windows)]
+fn read_system_proxy() -> Option<SystemProxy> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+
+    Some(SystemProxy {
+        enabled: key.get_value::<u32, _>("ProxyEnable").unwrap_or(0) != 0,
+        server: key.get_value::<String, _>("ProxyServer").unwrap_or_default(),
+        bypass: key
+            .get_value::<String, _>("ProxyOverride")
+            .unwrap_or_default(),
+        pac: key
+            .get_value::<String, _>("AutoConfigURL")
+            .unwrap_or_default(),
+    })
+}
+
+#[cfg(not(windows))]
+fn read_system_proxy() -> Option<SystemProxy> {
+    // macOS/Linux desktops export proxy settings into the environment for
+    // GUI apps, which the sidecar inherits already. Nothing to read.
+    None
+}
+
+/// Decide the proxy env the sidecars are spawned with, in priority order:
+///
+/// 1. `~/.claude/superai/settings.json` — the user typed it into Settings.
+/// 2. The desktop's own environment — the user (or IT) exported HTTPS_PROXY;
+///    the sidecar inherits it, so we must not override it.
+/// 3. The **operating system's** proxy configuration.
+///
+/// Step 3 is the one that was missing, and it is why one corporate machine
+/// works while its neighbour does not. When IT configures a system proxy,
+/// every other app on the box (Edge, Office, Teams) routes through it, while
+/// this app alone went direct — into whatever transparent appliance sits on
+/// the path. That appliance answers with an HTML block page, which surfaces as
+/// "the provider returned an empty response".
+///
+/// Escape hatch: `SUPERAI_USE_SYSTEM_PROXY=0` restores the old direct behavior,
+/// mirroring `SUPERAI_USE_SYSTEM_CA=0`.
+fn resolve_proxy_env() -> HashMap<String, String> {
+    let mut out = read_managed_proxy_env();
+
+    if map_has_proxy(&out) {
+        out.insert("SUPERAI_PROXY_SOURCE".to_string(), "settings".to_string());
+        return out;
+    }
+
+    let inherited = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]
+        .iter()
+        .any(|k| std::env::var(k).is_ok_and(|v| !v.trim().is_empty()));
+    if inherited {
+        println!("[desktop] proxy: source=inherited (HTTPS_PROXY set in this process's environment)");
+        out.insert("SUPERAI_PROXY_SOURCE".to_string(), "inherited".to_string());
+        return out;
+    }
+
+    if std::env::var("SUPERAI_USE_SYSTEM_PROXY")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(false)
+    {
+        println!("[desktop] proxy: source=none (system proxy disabled by SUPERAI_USE_SYSTEM_PROXY)");
+        out.insert("SUPERAI_PROXY_SOURCE".to_string(), "disabled".to_string());
+        return out;
+    }
+
+    let Some(system) = read_system_proxy() else {
+        out.insert("SUPERAI_PROXY_SOURCE".to_string(), "none".to_string());
+        return out;
+    };
+
+    let url = if system.enabled {
+        pick_windows_proxy_url(&system.server)
+    } else {
+        None
+    };
+
+    match url {
+        Some(url) => {
+            let no_proxy = windows_bypass_to_no_proxy(&system.bypass);
+            println!("[desktop] proxy: source=system {url} (NO_PROXY={no_proxy})");
+            out.insert("HTTPS_PROXY".to_string(), url.clone());
+            out.insert("HTTP_PROXY".to_string(), url);
+            // A NO_PROXY the user set in settings.json stays authoritative.
+            out.entry("NO_PROXY".to_string()).or_insert(no_proxy);
+            out.insert("SUPERAI_PROXY_SOURCE".to_string(), "system".to_string());
+        }
+        None if !system.pac.trim().is_empty() => {
+            // A PAC script maps each URL to a proxy by evaluating JavaScript.
+            // We cannot express that as an env var, and guessing would be
+            // worse than saying so. Tell the user exactly what to do.
+            println!(
+                "[desktop] proxy: this machine uses an automatic configuration script (PAC) at {} \
+                 which cannot be applied automatically. If chat fails with an HTML/interception \
+                 error, open that URL, read the proxy host:port it returns, and enter it under \
+                 Settings -> Network -> Proxy.",
+                system.pac.trim()
+            );
+            out.insert("SUPERAI_PROXY_SOURCE".to_string(), "pac-unapplied".to_string());
+        }
+        None => {
+            println!("[desktop] proxy: source=none (direct)");
+            out.insert("SUPERAI_PROXY_SOURCE".to_string(), "none".to_string());
+        }
+    }
+
+    out
+}
+
 /// Export the operating system's trusted CA certificates to a PEM file and
 /// return the env that makes the Bun sidecars trust them.
 ///
@@ -758,7 +976,7 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     let app_root_arg = app_root.to_string_lossy().to_string();
 
     // 单一合并 sidecar：第一个参数选 server / cli / adapters 模式。
-    let mut proxy_env = read_managed_proxy_env();
+    let mut proxy_env = resolve_proxy_env();
     proxy_env.extend(read_system_ca_env());
     if !proxy_env.is_empty() {
         let keys: Vec<&str> = proxy_env.keys().map(|s| s.as_str()).collect();
@@ -853,7 +1071,7 @@ fn start_adapters_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
         server_http_url.clone()
     };
 
-    let mut proxy_env = read_managed_proxy_env();
+    let mut proxy_env = resolve_proxy_env();
     proxy_env.extend(read_system_ca_env());
     let mut sidecar = app
         .shell()
@@ -954,8 +1172,93 @@ fn kill_windows_sidecars() {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_terminal_output, default_utf8_locale, ensure_utf8_locale, parse_env_block};
+    use super::{
+        decode_terminal_output, default_utf8_locale, ensure_utf8_locale, parse_env_block,
+        pick_windows_proxy_url, windows_bypass_to_no_proxy,
+    };
     use std::collections::HashMap;
+
+    /// Exercises the real registry read, not just the parsing. A typo in the
+    /// `Internet Settings` subkey path (or a wrong value type for the
+    /// ProxyEnable DWORD) would silently yield None and send every corporate
+    /// machine back to direct egress — the exact bug this feature fixes.
+    #[cfg(windows)]
+    #[test]
+    fn system_proxy_key_is_readable_on_windows() {
+        let system = super::read_system_proxy().expect("Internet Settings key must be readable");
+        println!(
+            "[this machine] ProxyEnable={} ProxyServer={:?} AutoConfigURL={:?}",
+            system.enabled, system.server, system.pac
+        );
+        // Whatever this machine is configured for, the derived values must be
+        // self-consistent: a proxy URL is only produced when it is enabled.
+        if !system.enabled {
+            assert_eq!(
+                super::pick_windows_proxy_url(&system.server).is_some() && system.enabled,
+                false
+            );
+        }
+    }
+
+    #[test]
+    fn windows_proxy_bare_value_applies_to_every_scheme() {
+        assert_eq!(
+            pick_windows_proxy_url("proxy.corp.example:8080").as_deref(),
+            Some("http://proxy.corp.example:8080")
+        );
+    }
+
+    #[test]
+    fn windows_proxy_per_scheme_list_prefers_https_then_http() {
+        assert_eq!(
+            pick_windows_proxy_url("http=h1.corp:80;https=h2.corp:443;ftp=h3.corp:21").as_deref(),
+            Some("http://h2.corp:443")
+        );
+        assert_eq!(
+            pick_windows_proxy_url("ftp=h3.corp:21;http=h1.corp:80").as_deref(),
+            Some("http://h1.corp:80")
+        );
+    }
+
+    #[test]
+    fn windows_proxy_ignores_socks_only_and_empty_values() {
+        // Bun's fetch speaks HTTP CONNECT; a SOCKS endpoint in HTTPS_PROXY
+        // fails more confusingly than going direct.
+        assert_eq!(pick_windows_proxy_url("socks=s.corp:1080"), None);
+        assert_eq!(pick_windows_proxy_url("socks.corp:1080"), None);
+        assert_eq!(pick_windows_proxy_url("   "), None);
+        assert_eq!(pick_windows_proxy_url("http=;https="), None);
+    }
+
+    #[test]
+    fn windows_proxy_keeps_an_explicit_scheme() {
+        assert_eq!(
+            pick_windows_proxy_url("http://proxy.corp:3128").as_deref(),
+            Some("http://proxy.corp:3128")
+        );
+    }
+
+    #[test]
+    fn windows_bypass_normalizes_wildcards_and_drops_local_token() {
+        assert_eq!(
+            windows_bypass_to_no_proxy("<local>;*.corp.example;10.*"),
+            ".corp.example,10.*,localhost,127.0.0.1,::1"
+        );
+    }
+
+    #[test]
+    fn windows_bypass_always_includes_loopback_without_duplicating_it() {
+        // The spawned CLI dials ws://127.0.0.1 back to the local server; if
+        // that is proxied the chat hangs forever (see read_managed_proxy_env).
+        assert_eq!(
+            windows_bypass_to_no_proxy(""),
+            "localhost,127.0.0.1,::1"
+        );
+        assert_eq!(
+            windows_bypass_to_no_proxy("LocalHost;127.0.0.1"),
+            "LocalHost,127.0.0.1,::1"
+        );
+    }
 
     #[test]
     fn terminal_output_decoder_preserves_split_chinese_characters() {

@@ -3473,6 +3473,50 @@ function looksLikeHtml(body: string): boolean {
 }
 
 /**
+ * Strips credentials from a proxy URL before it is shown on screen.
+ *
+ * A corporate proxy URL routinely embeds `user:password@`, and this string ends
+ * up in error bubbles, screenshots and bug reports. An unparseable value is
+ * reported only by shape — it may still contain a password.
+ */
+function redactProxyUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    // `new URL('alice:hunter2@@@')` does NOT throw — it parses as scheme
+    // `alice:` with an opaque path, and would echo the password verbatim.
+    // A usable proxy URL always has a host, so require one.
+    if (!parsed.hostname) throw new Error('proxy URL has no host')
+    if (parsed.username || parsed.password) {
+      parsed.username = 'REDACTED'
+      parsed.password = ''
+    }
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return `<unparseable, ${url.length} chars>`
+  }
+}
+
+/**
+ * Describes HOW this machine reaches the provider: through which proxy, and
+ * where that proxy came from.
+ *
+ * This is the field that answers "why does my colleague's identical machine
+ * work". A direct request and an intercepted one are indistinguishable from
+ * inside the app, but they differ entirely in `route=` — and `proxy_source=`
+ * says whether the value came from Settings, the environment, or the OS.
+ */
+export function describeNetworkRoute(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const proxy =
+    env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || ''
+  const source = env.SUPERAI_PROXY_SOURCE || 'unknown'
+  return proxy.trim()
+    ? `route=proxy ${redactProxyUrl(proxy)}; proxy_source=${source}`
+    : `route=direct; proxy_source=${source}`
+}
+
+/**
  * Builds the user-facing error for a non-streaming fallback that carried zero
  * content blocks. The headline names the actual failure mode — an intercepted
  * request reads completely differently to the user than a provider hiccup — and
@@ -3482,8 +3526,9 @@ export function buildEmptyFallbackErrorMessage(
   result: BetaMessage,
   streamErrorSummary: string,
   url?: string,
+  env: Record<string, string | undefined> = process.env,
 ): string {
-  const diagnostic = describeEmptyFallbackResponse(result, streamErrorSummary)
+  const diagnostic = `${describeEmptyFallbackResponse(result, streamErrorSummary)}; ${describeNetworkRoute(env)}`
   const body = getNonJsonFallbackBody(result)
   const target = url ? ` to ${url}` : ''
   const headline =

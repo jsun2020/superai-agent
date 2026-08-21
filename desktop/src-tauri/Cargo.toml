@@ -23,3 +23,8 @@ anyhow = "1.0.102"
 rustls-native-certs = "0.8"
 base64 = "0.22"
 portable-pty = "0.9.0"
+
+# Windows system proxy (HKCU\...\Internet Settings) -> HTTPS_PROXY for the Bun
+# sidecars; see read_system_proxy_env. Already in the lock via tauri's tree.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

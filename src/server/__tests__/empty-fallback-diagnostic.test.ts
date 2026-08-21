@@ -10,6 +10,7 @@ import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/mess
 import {
   buildEmptyFallbackErrorMessage,
   describeEmptyFallbackResponse,
+  describeNetworkRoute,
 } from '../../services/api/claude.js'
 
 function asBetaMessage(obj: Record<string, unknown>): BetaMessage {
@@ -146,5 +147,60 @@ describe('buildEmptyFallbackErrorMessage', () => {
     expect(msg).toContain('provider returned an empty response')
     expect(msg).not.toContain('HTML page')
     expect(msg).toContain('stop_reason=end_turn')
+  })
+})
+
+/**
+ * The route fields exist to answer "why does my colleague's identical machine
+ * work" from a single screenshot: two boxes on the same LAN differ only in
+ * whether their traffic goes through the sanctioned proxy.
+ */
+describe('describeNetworkRoute', () => {
+  test('reports a direct route and where that decision came from', () => {
+    expect(describeNetworkRoute({ SUPERAI_PROXY_SOURCE: 'none' })).toBe(
+      'route=direct; proxy_source=none',
+    )
+  })
+
+  test('reports the proxy and its source when one is in use', () => {
+    expect(
+      describeNetworkRoute({
+        HTTPS_PROXY: 'http://proxy.corp.example:8080',
+        SUPERAI_PROXY_SOURCE: 'system',
+      }),
+    ).toBe('route=proxy http://proxy.corp.example:8080; proxy_source=system')
+  })
+
+  test('never leaks proxy credentials into the error text', () => {
+    const route = describeNetworkRoute({
+      HTTPS_PROXY: 'http://alice:hunter2@proxy.corp.example:8080',
+      SUPERAI_PROXY_SOURCE: 'settings',
+    })
+    expect(route).not.toContain('hunter2')
+    expect(route).not.toContain('alice')
+    expect(route).toContain('REDACTED')
+    expect(route).toContain('proxy.corp.example:8080')
+  })
+
+  test('does not echo an unparseable proxy value, which may hold a password', () => {
+    const route = describeNetworkRoute({ HTTPS_PROXY: 'alice:hunter2@@@' })
+    expect(route).not.toContain('hunter2')
+    expect(route).toContain('unparseable')
+  })
+
+  test('marks the source unknown when the desktop did not stamp one', () => {
+    expect(describeNetworkRoute({})).toBe('route=direct; proxy_source=unknown')
+  })
+
+  test('the fallback error carries the route so a screenshot shows the path', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      '<html><head>\n<meta http-equiv="refresh" content="0;url=/block">' as unknown as BetaMessage,
+      'Stream ended without receiving any events',
+      undefined,
+      { SUPERAI_PROXY_SOURCE: 'none' },
+    )
+    expect(msg).toContain('route=direct')
+    expect(msg).toContain('proxy_source=none')
+    expect(msg).toContain('intercepting requests')
   })
 })
