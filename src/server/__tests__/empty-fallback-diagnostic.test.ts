@@ -106,11 +106,19 @@ describe('buildEmptyFallbackErrorMessage', () => {
   const INTERCEPT_PAGE =
     '<html><head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n<title>Access Denied</title></head><body>Request blocked by the security gateway.</body></html>'
 
+  // The corporate proxy's own URL-filter page, as seen on the Win11 machine:
+  // the request DID go through the configured proxy and the proxy refused it.
+  const URL_FILTER_PAGE =
+    '<html><head> <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> <title>URL Filter</title></head><body>access denied</body></html>'
+
   test('names interception, not a provider outage, for an HTML body', () => {
     const msg = buildEmptyFallbackErrorMessage(
       INTERCEPT_PAGE as unknown as BetaMessage,
       'InvalidHTTPResponse fetching "https://api.deepseek.com/anthropic/v1/messages?beta=true"',
       'https://api.deepseek.com/anthropic/v1/messages',
+      // Explicit env: this case is "no proxy configured", and defaulting to
+      // process.env would make the assertion depend on the developer's machine.
+      {},
     )
     expect(msg).toContain('HTML page instead of a model response')
     expect(msg).toContain('intercepting requests')
@@ -120,6 +128,43 @@ describe('buildEmptyFallbackErrorMessage', () => {
     expect(msg).toContain('Access Denied')
     // and it must NOT claim the provider returned an empty response
     expect(msg).not.toContain('provider returned an empty response')
+  })
+
+  test('blames the proxy itself when the block page arrived THROUGH a proxy', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      URL_FILTER_PAGE as unknown as BetaMessage,
+      'InvalidHTTPResponse fetching "https://api.minimaxi.com/anthropic/v1/messages?beta=true"',
+      'https://api.minimaxi.com/anthropic/v1/messages',
+      {
+        HTTPS_PROXY: 'http://proxy.corp.example:8080',
+        SUPERAI_PROXY_SOURCE: 'settings',
+      },
+    )
+    // The actionable half: the route is already correct, so telling the user
+    // something is "intercepting" would send them to fix a setting that is fine.
+    expect(msg).toContain('refused this URL')
+    expect(msg).toContain('filtering policy on the proxy')
+    expect(msg).toContain('not a missing proxy setting')
+    expect(msg).not.toContain('captive portal')
+    // the diagnostic tail still identifies which proxy and where it came from
+    expect(msg).toContain('route=proxy http://proxy.corp.example:8080')
+    expect(msg).toContain('proxy_source=settings')
+    // the page's own words survive
+    expect(msg).toContain('access denied')
+  })
+
+  test('same page WITHOUT a proxy still reads as interception (control)', () => {
+    const msg = buildEmptyFallbackErrorMessage(
+      URL_FILTER_PAGE as unknown as BetaMessage,
+      'InvalidHTTPResponse',
+      'https://api.minimaxi.com/anthropic/v1/messages',
+      { SUPERAI_PROXY_SOURCE: 'none' },
+    )
+    // Identical body, opposite verdict - proving the branch keys on the ROUTE
+    // and not on anything in the page.
+    expect(msg).toContain('intercepting requests')
+    expect(msg).not.toContain('filtering policy on the proxy')
+    expect(msg).toContain('route=direct')
   })
 
   test('distinguishes a non-HTML non-JSON body from an HTML one', () => {

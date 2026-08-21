@@ -3505,13 +3505,29 @@ function redactProxyUrl(url: string): string {
  * inside the app, but they differ entirely in `route=` — and `proxy_source=`
  * says whether the value came from Settings, the environment, or the OS.
  */
+/**
+ * The proxy this process will actually use, or '' when it routes directly.
+ * Shared so the diagnostic tail and the headline can never disagree about
+ * whether a proxy was involved.
+ */
+function configuredProxyUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return (
+    env.HTTPS_PROXY ||
+    env.https_proxy ||
+    env.HTTP_PROXY ||
+    env.http_proxy ||
+    ''
+  ).trim()
+}
+
 export function describeNetworkRoute(
   env: Record<string, string | undefined> = process.env,
 ): string {
-  const proxy =
-    env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || ''
+  const proxy = configuredProxyUrl(env)
   const source = env.SUPERAI_PROXY_SOURCE || 'unknown'
-  return proxy.trim()
+  return proxy
     ? `route=proxy ${redactProxyUrl(proxy)}; proxy_source=${source}`
     : `route=direct; proxy_source=${source}`
 }
@@ -3534,7 +3550,14 @@ export function buildEmptyFallbackErrorMessage(
   const headline =
     body !== null
       ? looksLikeHtml(body)
-        ? `The network returned an HTML page instead of a model response. A proxy, firewall or captive portal is intercepting requests${target} — the page text is below. This is a network configuration issue, not a provider outage.`
+        ? configuredProxyUrl(env)
+          ? // We deliberately routed through a proxy and IT answered with a web
+            // page: the proxy accepted the connection and then refused this URL.
+            // That is an allowlist / URL-filter decision on the proxy itself, so
+            // "something is intercepting you" would point the user at the wrong
+            // problem - the route is already correct and only policy can change.
+            `The proxy this app routes through returned a web page instead of the model's reply${target} - its text is below. The proxy accepted the connection and then refused this URL, so this is a filtering policy on the proxy, not a provider outage and not a missing proxy setting. Ask whoever administers the proxy to allow the provider's host, or use a provider your network already permits.`
+          : `The network returned an HTML page instead of a model response. A proxy, firewall or captive portal is intercepting requests${target} - the page text is below. This is a network configuration issue, not a provider outage.`
         : `The network returned a non-JSON response instead of a model response, which usually means something between this machine and the provider rewrote the reply${target}. The body is below.`
       : 'The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.'
   return `${API_ERROR_MESSAGE_PREFIX}: ${headline} [diagnostic: ${diagnostic}]`
