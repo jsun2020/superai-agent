@@ -167,6 +167,24 @@ describe('buildEmptyFallbackErrorMessage', () => {
     expect(msg).toContain('route=direct')
   })
 
+  test('names the endpoint even when the stream error does not embed one', () => {
+    // The Win11 case: "Stream ended without receiving any events" carries no
+    // URL, so without the explicit argument the message cannot say WHICH host
+    // was blocked - provider traffic and any other host look identical.
+    const msg = buildEmptyFallbackErrorMessage(
+      URL_FILTER_PAGE as unknown as BetaMessage,
+      'Stream ended without receiving any events',
+      'https://api.minimaxi.com/anthropic/v1',
+      {
+        HTTPS_PROXY: 'http://proxy.corp.example:8080',
+        SUPERAI_PROXY_SOURCE: 'pac',
+      },
+    )
+    expect(msg).toContain('https://api.minimaxi.com/anthropic/v1')
+    expect(msg).toContain('proxy_source=pac')
+    expect(msg).toContain('refused this URL')
+  })
+
   test('distinguishes a non-HTML non-JSON body from an HTML one', () => {
     const msg = buildEmptyFallbackErrorMessage(
       'upstream connect error or disconnect/reset before headers' as unknown as BetaMessage,

@@ -2606,6 +2606,11 @@ async function* queryModel(
         const content = buildEmptyFallbackErrorMessage(
           result,
           errorMessage(streamingError),
+          // Name the endpoint. Some stream errors embed it ("InvalidHTTPResponse
+          // fetching <url>") but others do not ("Stream ended without receiving
+          // any events"), and without it an intercepted reply cannot be told
+          // apart from a block aimed at some other host the app also talks to.
+          process.env.ANTHROPIC_BASE_URL,
         )
         logForDebugging(
           `Non-streaming fallback returned a response with zero content blocks: ${content}`,
@@ -2717,6 +2722,7 @@ async function* queryModel(
           const content = buildEmptyFallbackErrorMessage(
             result,
             '404 on stream creation',
+            process.env.ANTHROPIC_BASE_URL,
           )
           logForDebugging(
             `Non-streaming fallback returned a response with zero content blocks: ${content}`,
