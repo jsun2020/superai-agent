@@ -45,6 +45,7 @@ import {
 // ~400KB of OpenTelemetry + protobuf modules until telemetry is actually initialized.
 // gRPC exporters (~700KB via @grpc/grpc-js) are further lazy-loaded within instrumentation.ts.
 import { configureGlobalAgents } from '../utils/proxy.js'
+import { applySystemPacProxy } from '../utils/pac.js'
 import { isBetaTracingEnabled } from '../utils/telemetry/betaSessionTracing.js'
 import { getTelemetryAttributes } from '../utils/telemetryAttributes.js'
 import { setShellIfWindows } from '../utils/windowsPaths.js'
@@ -139,6 +140,22 @@ export const init = memoize(async (): Promise<void> => {
       duration_ms: Date.now() - mtlsStart,
     })
     logForDebugging('[init] configureGlobalMTLS complete')
+
+    // Apply the machine's PAC script, if the desktop shell found one. Windows
+    // honours an AutoConfigURL even when ProxyEnable is 0, so this is the only
+    // thing that proxies such a machine — and it must land in process.env
+    // BEFORE the agents below are built from it. Never throws; a PAC that
+    // cannot be reached leaves the environment untouched.
+    const pacStart = Date.now()
+    const pacResolution = await applySystemPacProxy()
+    if (pacResolution) {
+      logForDiagnosticsNoPII('info', 'init_pac_applied', {
+        duration_ms: Date.now() - pacStart,
+        // The directive names hosts, not credentials; the proxy URL itself is
+        // deliberately not logged here.
+        used_proxy: Boolean(pacResolution.proxyUrl),
+      })
+    }
 
     // Configure global HTTP agents (proxy and/or mTLS)
     const proxyStart = Date.now()

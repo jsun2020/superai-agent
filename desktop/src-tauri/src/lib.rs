@@ -618,9 +618,15 @@ fn resolve_app_root(_app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Read HTTPS_PROXY / HTTP_PROXY / NO_PROXY from
 /// `~/.claude/superai/settings.json` so they can be injected into the
-/// sidecar's spawn env. This MUST happen before spawn — Bun snapshots
-/// HTTPS_PROXY at process start; setting it from inside the sidecar later
-/// has no effect on Bun's native fetch.
+/// sidecar's spawn env.
+///
+/// Note: an earlier version of this comment claimed Bun snapshots HTTPS_PROXY
+/// at process start so the sidecar could not change it later. That is wrong,
+/// and was measured to be wrong: the app builds its own fetch options per
+/// request (`getProxyFetchOptions`, which reads `process.env` each call), so a
+/// proxy discovered at runtime — as PAC evaluation does — takes effect
+/// immediately. Injecting at spawn is still preferred because it covers the
+/// child's whole lifetime including any early request.
 fn read_managed_proxy_env() -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(home) = home_dir() else {
@@ -769,6 +775,36 @@ fn windows_bypass_to_no_proxy(bypass: &str) -> String {
     out.join(",")
 }
 
+/// What the OS's proxy configuration amounts to, once precedence is applied.
+#[derive(Debug, PartialEq, Eq)]
+enum SystemProxyChoice {
+    /// An auto-config script the sidecar must evaluate.
+    Pac(String),
+    /// A static proxy URL usable directly as HTTPS_PROXY.
+    Static(String),
+    Direct,
+}
+
+/// Apply Windows' actual precedence rules to a raw registry read.
+///
+/// The rule that matters, and that this originally got wrong: **an
+/// `AutoConfigURL` wins even when `ProxyEnable` is 0**. The two values are
+/// independent, not a flag gating a hierarchy - so a machine whose registry
+/// reads "proxy disabled" can be fully proxied by its PAC, which is exactly
+/// the configuration that could not chat while its Win10 neighbour could.
+fn choose_system_proxy(system: &SystemProxy) -> SystemProxyChoice {
+    let pac = system.pac.trim();
+    if !pac.is_empty() {
+        return SystemProxyChoice::Pac(pac.to_string());
+    }
+    if system.enabled {
+        if let Some(url) = pick_windows_proxy_url(&system.server) {
+            return SystemProxyChoice::Static(url);
+        }
+    }
+    SystemProxyChoice::Direct
+}
+
 #[cfg(windows)]
 fn read_system_proxy() -> Option<SystemProxy> {
     use winreg::enums::HKEY_CURRENT_USER;
@@ -844,14 +880,25 @@ fn resolve_proxy_env() -> HashMap<String, String> {
         return out;
     };
 
-    let url = if system.enabled {
-        pick_windows_proxy_url(&system.server)
-    } else {
-        None
-    };
-
-    match url {
-        Some(url) => {
+    // PAC FIRST. Windows honours an AutoConfigURL even when ProxyEnable is 0,
+    // and prefers it over a static ProxyServer when both are set - so a machine
+    // whose registry reads "no proxy" can be fully proxied. Testing `enabled`
+    // first (as this did before) mis-routes exactly those machines.
+    //
+    // A PAC maps each URL to a proxy by running JavaScript, which no env var can
+    // express, so the URL is handed to the sidecar - it has a JS engine and
+    // evaluates the script for the active provider (src/utils/pac.ts).
+    match choose_system_proxy(&system) {
+        SystemProxyChoice::Pac(pac) => {
+            println!("[desktop] proxy: source=pac {pac} (evaluated by the sidecar)");
+            out.insert("SUPERAI_PAC_URL".to_string(), pac);
+            out.insert("SUPERAI_PROXY_SOURCE".to_string(), "pac".to_string());
+            // Loopback must never be proxied whatever the script decides: the
+            // CLI subprocess dials back to ws://127.0.0.1.
+            out.entry("NO_PROXY".to_string())
+                .or_insert_with(|| windows_bypass_to_no_proxy(&system.bypass));
+        }
+        SystemProxyChoice::Static(url) => {
             let no_proxy = windows_bypass_to_no_proxy(&system.bypass);
             println!("[desktop] proxy: source=system {url} (NO_PROXY={no_proxy})");
             out.insert("HTTPS_PROXY".to_string(), url.clone());
@@ -860,20 +907,7 @@ fn resolve_proxy_env() -> HashMap<String, String> {
             out.entry("NO_PROXY".to_string()).or_insert(no_proxy);
             out.insert("SUPERAI_PROXY_SOURCE".to_string(), "system".to_string());
         }
-        None if !system.pac.trim().is_empty() => {
-            // A PAC script maps each URL to a proxy by evaluating JavaScript.
-            // We cannot express that as an env var, and guessing would be
-            // worse than saying so. Tell the user exactly what to do.
-            println!(
-                "[desktop] proxy: this machine uses an automatic configuration script (PAC) at {} \
-                 which cannot be applied automatically. If chat fails with an HTML/interception \
-                 error, open that URL, read the proxy host:port it returns, and enter it under \
-                 Settings -> Network -> Proxy.",
-                system.pac.trim()
-            );
-            out.insert("SUPERAI_PROXY_SOURCE".to_string(), "pac-unapplied".to_string());
-        }
-        None => {
+        SystemProxyChoice::Direct => {
             println!("[desktop] proxy: source=none (direct)");
             out.insert("SUPERAI_PROXY_SOURCE".to_string(), "none".to_string());
         }
@@ -1198,6 +1232,48 @@ mod tests {
                 false
             );
         }
+    }
+
+    fn sys(enabled: bool, server: &str, pac: &str) -> super::SystemProxy {
+        super::SystemProxy {
+            enabled,
+            server: server.to_string(),
+            bypass: String::new(),
+            pac: pac.to_string(),
+        }
+    }
+
+    /// The bug the user found: Windows honours AutoConfigURL even when
+    /// ProxyEnable is 0, so a "disabled" registry is not a direct machine.
+    #[test]
+    fn pac_wins_even_when_proxy_enable_is_zero() {
+        assert_eq!(
+            super::choose_system_proxy(&sys(false, "", "http://wpad.corp/proxy.pac")),
+            super::SystemProxyChoice::Pac("http://wpad.corp/proxy.pac".to_string())
+        );
+    }
+
+    /// And it outranks a static ProxyServer when both are configured.
+    #[test]
+    fn pac_outranks_a_static_proxy_server() {
+        assert_eq!(
+            super::choose_system_proxy(&sys(true, "static.corp:8080", "http://wpad.corp/p.pac")),
+            super::SystemProxyChoice::Pac("http://wpad.corp/p.pac".to_string())
+        );
+    }
+
+    #[test]
+    fn static_proxy_is_used_only_when_enabled_and_no_pac() {
+        assert_eq!(
+            super::choose_system_proxy(&sys(true, "static.corp:8080", "")),
+            super::SystemProxyChoice::Static("http://static.corp:8080".to_string())
+        );
+        // ProxyEnable=0 with no PAC really is direct.
+        assert_eq!(
+            super::choose_system_proxy(&sys(false, "static.corp:8080", "")),
+            super::SystemProxyChoice::Direct
+        );
+        assert_eq!(super::choose_system_proxy(&sys(true, "", "")), super::SystemProxyChoice::Direct);
     }
 
     #[test]
