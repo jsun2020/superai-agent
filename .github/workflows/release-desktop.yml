@@ -122,7 +122,13 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned deliberately, NOT `latest`. Bun 1.4.0 was published between
+          # the v0.2.21 and v0.2.22 builds, and the Linux-x64 job failed with
+          # "Target platform 'bun-linux-x64-baseline-v1.4.0' is not available
+          # for download" - a tagged release raced an upstream rollout it had
+          # no reason to depend on. Bump this line on purpose, in its own
+          # commit, so a release only ever changes when we change it.
+          bun-version: 1.4.0
 
       # ── Node.js (for tauri-action compatibility) ─────────────
       - name: Setup Node.js
