@@ -3,6 +3,7 @@ param(
   [switch]$SkipInstall,
   [switch]$SkipZip,
   [switch]$SkipOfficeCLI,
+  [switch]$SkipRipgrep,
   # Skip step 1 (Tauri + sidecar build) and only re-stage the folder/zip from
   # the artifacts already present - e.g. after a staging failure.
   [switch]$StageOnly,
@@ -238,6 +239,99 @@ agent can create and edit Word/Excel/PowerPoint documents out of the box.
   Write-Step 'Skipping OfficeCLI vendoring (-SkipOfficeCLI)'
 }
 
+# 2c) ripgrep - the search engine behind the Grep tool.
+#
+#     Portable users hit ENOENT on B:\~BUN\root\vendor\ripgrep\...: inside a
+#     Bun-compiled exe import.meta.url points into the virtual bundle root, so
+#     none of ripgrep.ts's built-in resolution modes can produce a real path.
+#     It falls back to resolving 'rg' on PATH - which is empty on a clean
+#     corporate machine. Staging rg.exe here puts it on PATH via
+#     registerVendorBinDir, so Grep works with nothing else installed.
+#
+#     Pinned and checksum-verified: a build must not be able to silently ship a
+#     different binary than the one that was reviewed. RIPGREP_EXE overrides
+#     the download with a local copy for offline or blocked networks.
+if (-not $SkipRipgrep) {
+  $vendorDir = Join-Path $portableDir 'vendor'
+  New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
+  $rgDest = Join-Path $vendorDir 'rg.exe'
+
+  $rgVersion = '14.1.1'
+  $rgArchive = "ripgrep-$rgVersion-x86_64-pc-windows-msvc.zip"
+  $rgUrl     = "https://github.com/BurntSushi/ripgrep/releases/download/$rgVersion/$rgArchive"
+  # Upstream publishes this at "$rgUrl.sha256"; verified against the downloaded
+  # bytes when the version was pinned.
+  $rgSha256  = 'd0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1'
+
+  if ($env:RIPGREP_EXE) {
+    if (-not (Test-Path $env:RIPGREP_EXE)) {
+      throw "RIPGREP_EXE is set but does not exist: $env:RIPGREP_EXE"
+    }
+    Copy-Item -LiteralPath $env:RIPGREP_EXE -Destination $rgDest -Force
+    Write-Step "Vendored ripgrep from RIPGREP_EXE ($env:RIPGREP_EXE)"
+  } else {
+    $cacheDir = Join-Path $repoRoot 'dist\vendor-cache'
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $rgZip = Join-Path $cacheDir $rgArchive
+
+    # Re-verify the cache on every build: a truncated or tampered cache entry
+    # must trigger a re-download rather than be shipped.
+    if ((Test-Path $rgZip) -and
+        ((Get-FileHash -LiteralPath $rgZip -Algorithm SHA256).Hash.ToLower() -ne $rgSha256)) {
+      Remove-Item -LiteralPath $rgZip -Force
+    }
+    if (-not (Test-Path $rgZip)) {
+      Write-Step "Downloading ripgrep $rgVersion ..."
+      try {
+        Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip -UseBasicParsing -TimeoutSec 300 -ErrorAction Stop
+      } catch {
+        throw ("Failed to download ripgrep from $rgUrl - $($_.Exception.Message). " +
+          "Set RIPGREP_EXE to a local rg.exe, or pass -SkipRipgrep to build without it " +
+          "(Grep then fails on machines that have no ripgrep installed).")
+      }
+    }
+    $rgActual = (Get-FileHash -LiteralPath $rgZip -Algorithm SHA256).Hash.ToLower()
+    if ($rgActual -ne $rgSha256) {
+      throw ("ripgrep checksum mismatch for $rgArchive" +
+        "  expected $rgSha256  actual $rgActual")
+    }
+
+    # Ship the licenses out of the same verified archive - no second fetch that
+    # could fail, or drift from the binary it covers.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $rgRoot = "ripgrep-$rgVersion-x86_64-pc-windows-msvc"
+    $wanted = [ordered]@{
+      "$rgRoot/rg.exe"      = $rgDest
+      "$rgRoot/COPYING"     = (Join-Path $vendorDir 'RIPGREP-COPYING.txt')
+      "$rgRoot/LICENSE-MIT" = (Join-Path $vendorDir 'RIPGREP-LICENSE-MIT.txt')
+      "$rgRoot/UNLICENSE"   = (Join-Path $vendorDir 'RIPGREP-UNLICENSE.txt')
+    }
+    $zipReader = [IO.Compression.ZipFile]::OpenRead($rgZip)
+    try {
+      foreach ($entryName in $wanted.Keys) {
+        $entry = $zipReader.Entries | Where-Object { $_.FullName -eq $entryName } | Select-Object -First 1
+        if (-not $entry) { throw "ripgrep archive is missing expected entry '$entryName'" }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $wanted[$entryName], $true)
+      }
+    } finally {
+      $zipReader.Dispose()
+    }
+    Write-Step "Vendored ripgrep $rgVersion (sha256 verified)"
+  }
+
+  # Prove the staged binary actually runs. A wrong-arch or truncated copy is
+  # invisible until a user's first Grep.
+  $rgOut = & $rgDest --version
+  if ($LASTEXITCODE -ne 0) { throw "Staged vendor\rg.exe failed 'rg --version' (exit $LASTEXITCODE)" }
+  $rgReported = ($rgOut | Select-Object -First 1)
+  if ((-not $env:RIPGREP_EXE) -and ($rgReported -notmatch [regex]::Escape($rgVersion))) {
+    throw "Staged vendor\rg.exe reports '$rgReported', expected ripgrep $rgVersion"
+  }
+  Write-Step "vendor\rg.exe -> $rgReported"
+} else {
+  Write-Step 'Skipping ripgrep vendoring (-SkipRipgrep)'
+}
+
 $readme = @'
 SuperAI Agent - Portable Windows Build
 ======================================
@@ -284,6 +378,11 @@ Files:
                                       built-in office agent uses for Word /
                                       Excel / PowerPoint tasks (Apache-2.0,
                                       github.com/iOfficeAI/OfficeCLI)
+  vendorg.exe                       Bundled ripgrep - the search engine the
+                                      Grep tool uses. Without it Grep cannot
+                                      run on a machine that has no ripgrep
+                                      installed (MIT / Unlicense,
+                                      github.com/BurntSushi/ripgrep)
 
 WebView2:
   SuperAIAgent.exe needs Microsoft Edge WebView2. Pre-installed on Windows 11
