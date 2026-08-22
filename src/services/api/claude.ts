@@ -232,6 +232,7 @@ import { CLIENT_REQUEST_ID_HEADER, getAnthropicClient } from './client.js'
 import {
   API_ERROR_MESSAGE_PREFIX,
   CUSTOM_OFF_SWITCH_MESSAGE,
+  EmptyFallbackRetryableError,
   getAssistantMessageFromError,
   getErrorMessageIfRefusal,
 } from './errors.js'
@@ -2616,6 +2617,18 @@ async function* queryModel(
           `Non-streaming fallback returned a response with zero content blocks: ${content}`,
           { level: 'error' },
         )
+        // A proxy block page is a policy decision: the same request produces the
+        // same page every time, so retrying only makes the user wait for an
+        // answer that cannot change. Anything else that lands here is
+        // connection-level - a dropped stream whose fallback also came back with
+        // nothing - and a fresh request usually clears it. Until now BOTH cases
+        // ended the turn, and the message even told the user to "try again",
+        // which is the retry we already know how to do: on an unstable link that
+        // turns every query into a manual retry ritual. Hand the transient case
+        // to withRetry's backoff instead.
+        if (shouldRetryEmptyFallback(result)) {
+          throw new EmptyFallbackRetryableError(content)
+        }
         yield createAssistantAPIErrorMessage({
           content,
           error: 'server_error',
@@ -3476,6 +3489,22 @@ function getNonJsonFallbackBody(result: BetaMessage): string | null {
  */
 function looksLikeHtml(body: string): boolean {
   return /^\s*(<!doctype html|<html\b|<head\b)/i.test(body)
+}
+
+/**
+ * Should an empty non-streaming fallback be retried automatically?
+ *
+ * Yes for anything connection-shaped: the stream died and the fallback brought
+ * back nothing usable, which a fresh request usually clears. No for an HTML
+ * block page - that is a filtering policy, so every attempt returns the same
+ * page and retrying only makes the user wait for an answer that cannot change.
+ *
+ * Extracted so the decision is testable: it is reached from deep inside the
+ * streaming generator, which has no test harness here.
+ */
+export function shouldRetryEmptyFallback(result: BetaMessage): boolean {
+  const body = getNonJsonFallbackBody(result)
+  return body === null || !looksLikeHtml(body)
 }
 
 /**

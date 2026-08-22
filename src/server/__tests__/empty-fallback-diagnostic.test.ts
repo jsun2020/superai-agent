@@ -6,12 +6,18 @@
  * identify the culprit on a machine we cannot access.
  */
 import { describe, expect, test } from 'bun:test'
+import { APIConnectionError, APIConnectionTimeoutError } from '@anthropic-ai/sdk'
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import {
   buildEmptyFallbackErrorMessage,
   describeEmptyFallbackResponse,
   describeNetworkRoute,
+  shouldRetryEmptyFallback,
 } from '../../services/api/claude.js'
+import {
+  EmptyFallbackRetryableError,
+  getAssistantMessageFromError,
+} from '../../services/api/errors.js'
 
 function asBetaMessage(obj: Record<string, unknown>): BetaMessage {
   return obj as unknown as BetaMessage
@@ -99,18 +105,19 @@ describe('describeEmptyFallbackResponse', () => {
   })
 })
 
+// Verbatim shape observed on the corporate Win11 machine: the SDK resolved to
+// the response TEXT because the content-type was not JSON, and the text was an
+// interception page. Module-scoped so the retry-decision tests below reuse the
+// exact bodies the message tests assert on.
+const INTERCEPT_PAGE =
+  '<html><head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n<title>Access Denied</title></head><body>Request blocked by the security gateway.</body></html>'
+
+// The corporate proxy's own URL-filter page, as seen on the Win11 machine:
+// the request DID go through the configured proxy and the proxy refused it.
+const URL_FILTER_PAGE =
+  '<html><head> <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> <title>URL Filter</title></head><body>access denied</body></html>'
+
 describe('buildEmptyFallbackErrorMessage', () => {
-  // Verbatim shape observed on the corporate Win11 machine: the SDK resolved to
-  // the response TEXT because the content-type was not JSON, and the text was an
-  // interception page.
-  const INTERCEPT_PAGE =
-    '<html><head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n<title>Access Denied</title></head><body>Request blocked by the security gateway.</body></html>'
-
-  // The corporate proxy's own URL-filter page, as seen on the Win11 machine:
-  // the request DID go through the configured proxy and the proxy refused it.
-  const URL_FILTER_PAGE =
-    '<html><head> <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> <title>URL Filter</title></head><body>access denied</body></html>'
-
   test('names interception, not a provider outage, for an HTML body', () => {
     const msg = buildEmptyFallbackErrorMessage(
       INTERCEPT_PAGE as unknown as BetaMessage,
@@ -210,6 +217,82 @@ describe('buildEmptyFallbackErrorMessage', () => {
     expect(msg).toContain('provider returned an empty response')
     expect(msg).not.toContain('HTML page')
     expect(msg).toContain('stop_reason=end_turn')
+  })
+})
+
+/**
+ * On an unstable link the empty fallback used to end the turn, so every blip
+ * became a manual retry ("hi?" until it answers) - the error text even said
+ * "please try again", asking the user to do the retry the app already knows how
+ * to do. These pin the two halves of the fix: the error must be retryable, and
+ * an exhausted retry must still show the diagnostic rather than a generic
+ * connection message.
+ */
+describe('EmptyFallbackRetryableError', () => {
+  const DIAG =
+    'API Error: The provider returned an empty response after the streaming connection was interrupted. [diagnostic: stream_error=Stream ended without receiving any events; route=proxy http://proxy.corp.example:8080; proxy_source=pac]'
+
+  test('is an APIConnectionError, which is what makes withRetry retry it', () => {
+    // withRetry drops any error failing `error instanceof APIError` before
+    // shouldRetry() is consulted, and shouldRetry() returns true for
+    // APIConnectionError. A plain Error here is exactly why the turn used to end.
+    const err = new EmptyFallbackRetryableError(DIAG)
+    expect(err).toBeInstanceOf(APIConnectionError)
+  })
+
+  test('its message avoids the word timeout, which would erase the diagnostic', () => {
+    // getAssistantMessageFromError replaces any APIConnectionError whose message
+    // mentions "timeout" with a generic string. The diagnostic can quote a proxy
+    // page containing that word, so the message must stay fixed.
+    const err = new EmptyFallbackRetryableError(
+      'API Error: gateway timeout page said timeout',
+    )
+    expect(err.message.toLowerCase()).not.toContain('timeout')
+    expect(err.diagnosticContent).toContain('timeout')
+  })
+
+  test('an exhausted retry still surfaces the diagnostic, not a generic error', () => {
+    const msg = getAssistantMessageFromError(
+      new EmptyFallbackRetryableError(DIAG),
+      'claude-sonnet-5',
+    )
+    const text = JSON.stringify(msg.message.content)
+    expect(text).toContain('proxy_source=pac')
+    expect(text).toContain('Stream ended without receiving any events')
+  })
+
+  test('retries a connection-shaped empty fallback, but never a block page', () => {
+    // A dropped stream leaves no body at all: retry it.
+    expect(
+      shouldRetryEmptyFallback(asBetaMessage({ id: 'm', content: [] })),
+    ).toBe(true)
+    // A non-HTML rewrite (gateway text) is still connection-shaped: retry it.
+    expect(
+      shouldRetryEmptyFallback(
+        'upstream connect error or disconnect/reset before headers' as unknown as BetaMessage,
+      ),
+    ).toBe(true)
+    // The proxy's own filter page is a policy decision - identical every time,
+    // so retrying it just makes the user wait. This is the case that must NOT
+    // retry, and it is the one the corporate Win11 machine hits.
+    expect(
+      shouldRetryEmptyFallback(URL_FILTER_PAGE as unknown as BetaMessage),
+    ).toBe(false)
+    expect(
+      shouldRetryEmptyFallback(INTERCEPT_PAGE as unknown as BetaMessage),
+    ).toBe(false)
+  })
+
+  test('a genuine connection timeout still gets the generic message (control)', () => {
+    // Proves the new branch did not hijack the pre-existing timeout handling -
+    // without this, "the diagnostic survives" could be true because the new
+    // branch swallowed everything.
+    const msg = getAssistantMessageFromError(
+      new APIConnectionTimeoutError({ message: 'Request timed out' }),
+      'claude-sonnet-5',
+    )
+    const text = JSON.stringify(msg.message.content)
+    expect(text).not.toContain('proxy_source=')
   })
 })
 
