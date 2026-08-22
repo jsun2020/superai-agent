@@ -1065,8 +1065,15 @@ export function getAssistantMessageFromError(
 
   // Connection errors (non-timeout) — use formatAPIError for detailed messages
   if (error instanceof APIConnectionError) {
+    // Carry the route. "Unable to connect to API (ConnectionRefused)" on its own
+    // cannot distinguish the two cases that matter on a locked-down network: we
+    // went DIRECT and the firewall sent a RST, or we went through a proxy that
+    // is not listening. Those need opposite fixes, and a user's screenshot is
+    // often the only evidence available - this is the same reason the
+    // empty-fallback error carries it, and that error is not the one a refused
+    // connection produces.
     return createAssistantAPIErrorMessage({
-      content: `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)}`,
+      content: `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)} [diagnostic: ${describeNetworkRoute()}]`,
       error: 'unknown',
     })
   }

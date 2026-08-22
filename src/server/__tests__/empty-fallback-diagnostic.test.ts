@@ -435,6 +435,38 @@ describe('EmptyFallbackRetryableError', () => {
     ).toBe(false)
   })
 
+  test('a refused connection carries the route, so direct vs proxy is visible', () => {
+    // Field case: after clearing the Settings proxy the app routed DIRECT, the
+    // corporate firewall answered with a TCP RST, and the user saw only
+    // "Unable to connect to API (ConnectionRefused)". That message cannot
+    // distinguish "we went direct and were refused" from "we went through a
+    // proxy that is not listening" - opposite fixes, and a screenshot was the
+    // only evidence available.
+    const saved = { ...process.env }
+    try {
+      delete process.env.HTTPS_PROXY
+      delete process.env.https_proxy
+      delete process.env.HTTP_PROXY
+      delete process.env.http_proxy
+      process.env.SUPERAI_PROXY_SOURCE = 'none'
+      // This branch is reached via a subscriber check that reads auth env; a
+      // dummy value keeps the test hermetic instead of depending on whatever
+      // the developer's machine happens to export.
+      process.env.ANTHROPIC_API_KEY ??= 'sk-test-not-a-real-key'
+      const msg = getAssistantMessageFromError(
+        new APIConnectionError({ message: 'Connection error.' }),
+        'claude-sonnet-5',
+      )
+      const text = JSON.stringify(msg.message.content)
+      expect(text).toContain('route=direct')
+      expect(text).toContain('proxy_source=none')
+    } finally {
+      // process.env is shared across workers (LL-041) - restore it.
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+      Object.assign(process.env, saved)
+    }
+  })
+
   test('a genuine connection timeout still gets the generic message (control)', () => {
     // Proves the new branch did not hijack the pre-existing timeout handling -
     // without this, "the diagnostic survives" could be true because the new

@@ -283,7 +283,18 @@ export async function applySystemPacProxy(
   env: Record<string, string | undefined> = process.env,
 ): Promise<PacResolution | null> {
   const pacUrl = env.SUPERAI_PAC_URL?.trim()
-  if (!pacUrl) return null
+  if (!pacUrl) {
+    // The ONLY silent path in this function, and the one that cost the most:
+    // with no PAC URL the app routes direct, and on a network that RSTs direct
+    // egress every request fails with ConnectionRefused while the log says
+    // nothing at all about routing. Every other branch below logs its outcome;
+    // this one must too.
+    logForDebugging(
+      'PAC not evaluated: SUPERAI_PAC_URL is not set (the desktop passes it only when the OS has an AutoConfigURL). Routing is unchanged.',
+      { level: 'info' },
+    )
+    return null
+  }
 
   // An explicit proxy always wins - the user typed it into Settings, or IT
   // exported it into the environment. Never override a deliberate choice.

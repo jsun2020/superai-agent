@@ -22,6 +22,7 @@ import { applyExtraCACertsFromConfig } from '../utils/caCertsConfig.js'
 import { registerCleanup } from '../utils/cleanupRegistry.js'
 import { enableConfigs, recordFirstStartTime } from '../utils/config.js'
 import { logForDebugging } from '../utils/debug.js'
+import { describeNetworkRoute } from '../services/api/errors.js'
 import { detectCurrentRepository } from '../utils/detectRepository.js'
 import { logForDiagnosticsNoPII } from '../utils/diagLogs.js'
 import { initJetBrainsDetection } from '../utils/envDynamic.js'
@@ -165,6 +166,12 @@ export const init = memoize(async (): Promise<void> => {
       duration_ms: Date.now() - proxyStart,
     })
     logForDebugging('[init] configureGlobalAgents complete')
+    // One line stating how this process reaches the provider. Until now the
+    // route existed only inside one error message, so a debug log from a
+    // machine we cannot touch never revealed whether it went through a proxy,
+    // which one, or where that choice came from - the first question worth
+    // asking about any network failure.
+    logForDebugging(`[init] network ${describeNetworkRoute()}`, { level: 'info' })
     profileCheckpoint('init_network_configured')
 
     // Preconnect to the Anthropic API — overlap TCP+TLS handshake
