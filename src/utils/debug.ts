@@ -88,6 +88,30 @@ export const isDebugToStdErr = memoize((): boolean => {
   )
 })
 
+/**
+ * Re-reads the env-derived debug settings after settings.json env has been
+ * applied to process.env.
+ *
+ * isDebugMode() and getMinDebugLogLevel() are memoized and get evaluated during
+ * startup, BEFORE applySafeConfigEnvironmentVariables() copies settings.env
+ * into process.env. The memo therefore locks in "debug off" and a
+ * `"env": { "DEBUG": "1" }` entry in settings.json has no effect whatsoever -
+ * measured, not assumed: with that setting the app writes zero debug files,
+ * while the same value in the process env writes one.
+ *
+ * That matters because a desktop user cannot pass --debug: the GUI launches the
+ * sidecar itself, so settings.json is the ONLY way they can turn logging on,
+ * and it silently did nothing. Anyone asked for a debug log simply could not
+ * produce one.
+ *
+ * argv-derived getters are deliberately left alone - argv does not change.
+ */
+export function refreshDebugSettingsFromEnv(): void {
+  isDebugMode.cache?.clear?.()
+  getMinDebugLogLevel.cache?.clear?.()
+  getDebugFilter.cache?.clear?.()
+}
+
 export const getDebugFilePath = memoize((): string | null => {
   for (let i = 0; i < process.argv.length; i++) {
     const arg = process.argv[i]!

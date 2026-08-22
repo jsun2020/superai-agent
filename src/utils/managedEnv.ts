@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
 import { clearCACertsCache } from './caCerts.js'
+import { refreshDebugSettingsFromEnv } from './debug.js'
 import { getGlobalConfig } from './config.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import {
@@ -200,6 +201,12 @@ export function applySafeConfigEnvironmentVariables(): void {
       process.env[key] = value
     }
   }
+
+  // The debug getters are memoized and were already evaluated by this point, so
+  // without this a DEBUG entry in settings.env is silently ignored - and that
+  // is the only way a desktop user can turn logging on, since the GUI spawns
+  // the sidecar and they cannot pass --debug.
+  refreshDebugSettingsFromEnv()
 }
 
 /**

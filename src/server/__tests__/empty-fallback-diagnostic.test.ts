@@ -193,6 +193,35 @@ describe('buildEmptyFallbackErrorMessage', () => {
     expect(msg).toContain('route=direct')
   })
 
+  test('reports the attempt count, so a screenshot shows whether retry ran', () => {
+    // The question three releases of retry work could not answer from a
+    // screenshot: did the automatic retry fire, or did the turn end on the
+    // first refusal? A debug log cannot answer it either - debug logging is off
+    // unless the app was started with --debug, which a desktop user cannot do.
+    const msg = buildEmptyFallbackErrorMessage(
+      URL_FILTER_PAGE as unknown as BetaMessage,
+      'InvalidHTTPResponse',
+      'https://api.minimaxi.com/anthropic/v1',
+      { HTTPS_PROXY: 'http://proxy.corp.example:8080' },
+      { attempt: 3, elapsedMs: 12_400 },
+    )
+    expect(msg).toContain('attempt=3')
+    expect(msg).toContain('elapsed=12.4s')
+  })
+
+  test('omits attempt fields entirely when no retry info is supplied', () => {
+    // Control: the fields must not appear as "attempt=undefined" on the paths
+    // that do not pass them.
+    const msg = buildEmptyFallbackErrorMessage(
+      URL_FILTER_PAGE as unknown as BetaMessage,
+      'InvalidHTTPResponse',
+      undefined,
+      {},
+    )
+    expect(msg).not.toContain('attempt=')
+    expect(msg).not.toContain('elapsed=')
+  })
+
   test('names the endpoint even when the stream error does not embed one', () => {
     // The Win11 case: "Stream ended without receiving any events" carries no
     // URL, so without the explicit argument the message cannot say WHICH host

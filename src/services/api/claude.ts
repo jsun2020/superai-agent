@@ -2614,6 +2614,8 @@ async function* queryModel(
           // any events"), and without it an intercepted reply cannot be told
           // apart from a block aimed at some other host the app also talks to.
           process.env.ANTHROPIC_BASE_URL,
+          process.env,
+          { attempt: attemptNumber, elapsedMs: Date.now() - startIncludingRetries },
         )
         logForDebugging(
           `Non-streaming fallback returned a response with zero content blocks: ${content}`,
@@ -3536,8 +3538,20 @@ export function buildEmptyFallbackErrorMessage(
   streamErrorSummary: string,
   url?: string,
   env: Record<string, string | undefined> = process.env,
+  retry?: { attempt: number; elapsedMs: number },
 ): string {
-  const diagnostic = `${describeEmptyFallbackResponse(result, streamErrorSummary)}; ${describeNetworkRoute(env)}`
+  // attempt/elapsed exist so one screenshot answers "did the automatic retry
+  // actually run?" - the question that decides whether a failure is the network
+  // refusing repeatedly or our own retry never firing. It cannot be answered
+  // from a debug log, because debug logging is OFF unless the app was started
+  // with --debug (debug.ts shouldLogDebugMessage), which a desktop user cannot
+  // easily do. attempt=1 means no retry happened; attempt=N means N tries all
+  // failed. elapsed distinguishes an instant refusal from one that sat through
+  // the 90s stream idle watchdog.
+  const retryPart = retry
+    ? `; attempt=${retry.attempt}; elapsed=${(retry.elapsedMs / 1000).toFixed(1)}s`
+    : ''
+  const diagnostic = `${describeEmptyFallbackResponse(result, streamErrorSummary)}${retryPart}; ${describeNetworkRoute(env)}`
   const body = getNonJsonFallbackBody(result)
   const target = url ? ` to ${url}` : ''
   const headline =
