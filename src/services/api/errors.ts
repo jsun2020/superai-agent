@@ -524,31 +524,6 @@ export function buildProxyAuthErrorMessage(
   return `${API_ERROR_MESSAGE_PREFIX}: The HTTP proxy${via} refused the request because it requires authentication (407). ${advice} [diagnostic: proxy_auth=${schemes.length ? schemes.join(',') : 'unspecified'}; ${describeNetworkRoute(env)}]`
 }
 
-/**
- * A non-streaming fallback that came back empty for a reason a fresh request
- * can plausibly clear (a dropped connection, a truncated tunnel) rather than a
- * deterministic refusal.
- *
- * It extends APIConnectionError purely so the existing `shouldRetry()` treats it
- * as retryable — without that the plain Error thrown here fails the
- * `error instanceof APIError` gate in withRetry and the turn ends on the first
- * blip, leaving the user to retry by hand. The already-built diagnostic travels
- * on the error so that an exhausted retry still shows what actually came back
- * instead of a generic connection message.
- */
-export class EmptyFallbackRetryableError extends APIConnectionError {
-  readonly diagnosticContent: string
-
-  constructor(diagnosticContent: string) {
-    // The SDK replaces any APIConnectionError whose message mentions "timeout"
-    // with a generic timeout string, and the diagnostic may quote a proxy page
-    // containing that word - so keep the message fixed and carry the real text
-    // in a field of our own.
-    super({ message: 'Empty non-streaming fallback response' })
-    this.diagnosticContent = diagnosticContent
-  }
-}
-
 export function getAssistantMessageFromError(
   error: unknown,
   model: string,
@@ -557,16 +532,6 @@ export function getAssistantMessageFromError(
     messagesForAPI?: (UserMessage | AssistantMessage)[]
   },
 ): AssistantMessage {
-  // Checked before the timeout branch below: this IS an APIConnectionError, and
-  // the generic timeout/connection wording would discard the diagnostic that
-  // names the actual culprit.
-  if (error instanceof EmptyFallbackRetryableError) {
-    return createAssistantAPIErrorMessage({
-      content: error.diagnosticContent,
-      error: 'server_error',
-    })
-  }
-
   // 407 Proxy Authentication Required. Without this branch the user sees
   // "API Error: 407 status code (no body)" - the proxy sends no body, so there
   // is nothing else to show - which names neither the proxy nor the fix. The

@@ -165,6 +165,7 @@ import { CLAUDE_IN_CHROME_MCP_SERVER_NAME } from 'src/utils/claudeInChrome/commo
 import { CHROME_TOOL_SEARCH_INSTRUCTIONS } from 'src/utils/claudeInChrome/prompt.js'
 import { getMaxThinkingTokensForModel } from 'src/utils/context.js'
 import { logForDebugging } from 'src/utils/debug.js'
+import { sleep } from 'src/utils/sleep.js'
 import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { type EffortValue, modelSupportsEffort } from 'src/utils/effort.js'
 import {
@@ -234,7 +235,6 @@ import {
   configuredProxyUrl,
   CUSTOM_OFF_SWITCH_MESSAGE,
   describeNetworkRoute,
-  EmptyFallbackRetryableError,
   getAssistantMessageFromError,
   getErrorMessageIfRefusal,
 } from './errors.js'
@@ -2551,25 +2551,44 @@ async function* queryModel(
           ? 'watchdog'
           : 'other') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       })
-      const result = yield* executeNonStreamingRequest(
-        { model: options.model, source: options.querySource },
-        {
-          model: options.model,
-          fallbackModel: options.fallbackModel,
-          thinkingConfig,
-          ...(isFastModeEnabled() && { fastMode: isFastMode }),
-          signal,
-          initialConsecutive529Errors: is529Error(streamingError) ? 1 : 0,
-          querySource: options.querySource,
-        },
-        paramsFromContext,
-        (attempt, _startTime, tokens) => {
-          attemptNumber = attempt
-          maxOutputTokens = tokens
-        },
-        params => captureAPIRequest(params, options.querySource),
-        streamRequestId,
-      )
+      // Retried HERE, not by withRetry - see runEmptyFallbackWithRetry for why
+      // the previous two releases' retry never ran. A block page is not a
+      // transport error, so executeNonStreamingRequest's own withRetry sees a
+      // perfectly successful 200 and returns a body with no content blocks.
+      const { result, attempts: fallbackAttempts } =
+        yield* runEmptyFallbackWithRetry(
+          () =>
+            executeNonStreamingRequest(
+              { model: options.model, source: options.querySource },
+              {
+                model: options.model,
+                fallbackModel: options.fallbackModel,
+                thinkingConfig,
+                ...(isFastModeEnabled() && { fastMode: isFastMode }),
+                signal,
+                initialConsecutive529Errors: is529Error(streamingError) ? 1 : 0,
+                querySource: options.querySource,
+              },
+              paramsFromContext,
+              (attempt, _startTime, tokens) => {
+                attemptNumber = attempt
+                maxOutputTokens = tokens
+              },
+              params => captureAPIRequest(params, options.querySource),
+              streamRequestId,
+            ),
+          r =>
+            normalizeContentFromAPI(r.content, tools, options.agentId).length ===
+            0,
+          shouldRetryEmptyFallback,
+          async attempt => {
+            logForDebugging(
+              `Empty non-streaming fallback (attempt ${attempt}) - retrying`,
+              { level: 'warn' },
+            )
+            await sleep(Math.min(1000 * attempt, 3000), signal)
+          },
+        )
 
       const m: AssistantMessage = {
         message: {
@@ -2615,21 +2634,20 @@ async function* queryModel(
           // apart from a block aimed at some other host the app also talks to.
           process.env.ANTHROPIC_BASE_URL,
           process.env,
-          { attempt: attemptNumber, elapsedMs: Date.now() - startIncludingRetries },
+          // fallbackAttempts is how many times the fallback itself ran, which
+          // is the number the retry above controls. attemptNumber counts the
+          // inner request attempts and would read 1 even after three fallbacks.
+          {
+            attempt: fallbackAttempts,
+            elapsedMs: Date.now() - startIncludingRetries,
+          },
         )
         logForDebugging(
           `Non-streaming fallback returned a response with zero content blocks: ${content}`,
           { level: 'error' },
         )
-        // Both a dropped connection and a proxy block page can clear on their
-        // own here - see shouldRetryEmptyFallback for why the block page is not
-        // the deterministic policy answer it looks like. Ending the turn instead
-        // of retrying is what made the user retry by hand, sending "hi?" until
-        // the app answered; the message even told them to "try again", which is
-        // the retry we already know how to do.
-        if (shouldRetryEmptyFallback(result, attemptNumber)) {
-          throw new EmptyFallbackRetryableError(content)
-        }
+        // Reaching here means the retry above is already spent: either the
+        // budget ran out or the body is a block page that will not change.
         yield createAssistantAPIErrorMessage({
           content,
           error: 'server_error',
@@ -3516,6 +3534,41 @@ function looksLikeHtml(body: string): boolean {
  * streaming generator, which has no test harness here.
  */
 export const BLOCK_PAGE_MAX_ATTEMPTS = 3
+
+/**
+ * Re-runs the non-streaming fallback until it returns something usable, the
+ * retry budget is spent, or the body is one that cannot change.
+ *
+ * This exists because v0.2.26 and v0.2.27 both "retried" the empty fallback by
+ * throwing a retryable error, and that never retried anything. `withRetry`'s
+ * operation callback covers only the request that creates the stream; the
+ * non-streaming fallback runs later, in queryModel, outside that loop. So the
+ * throw went straight to queryModel's catch and the turn ended on the first
+ * empty body - exactly the behaviour those releases claimed to fix. Field logs
+ * settled it: withRetry logs `API error (attempt N/M)` for every error it
+ * handles, and there were eleven such lines for a refused connection and none
+ * at all for the empty fallback.
+ *
+ * The retry therefore has to live where the call is. Injecting the pieces keeps
+ * it testable - the previous two attempts were unverifiable by construction,
+ * which is why they shipped broken twice.
+ */
+export async function* runEmptyFallbackWithRetry<T>(
+  attemptOnce: (attempt: number) => AsyncGenerator<unknown, T>,
+  isEmpty: (result: T) => boolean,
+  canRetry: (result: T, attempt: number) => boolean,
+  delay: (attempt: number) => Promise<void>,
+): AsyncGenerator<unknown, { result: T; attempts: number }> {
+  let attempt = 0
+  for (;;) {
+    attempt++
+    const result = yield* attemptOnce(attempt)
+    if (!isEmpty(result) || !canRetry(result, attempt)) {
+      return { result, attempts: attempt }
+    }
+    await delay(attempt)
+  }
+}
 
 export function shouldRetryEmptyFallback(
   result: BetaMessage,

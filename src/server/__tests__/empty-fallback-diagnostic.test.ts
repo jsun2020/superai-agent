@@ -16,12 +16,12 @@ import {
   buildEmptyFallbackErrorMessage,
   describeEmptyFallbackResponse,
   BLOCK_PAGE_MAX_ATTEMPTS,
+  runEmptyFallbackWithRetry,
   shouldRetryEmptyFallback,
 } from '../../services/api/claude.js'
 import {
   buildProxyAuthErrorMessage,
   describeNetworkRoute,
-  EmptyFallbackRetryableError,
   getAssistantMessageFromError,
   parseProxyAuthSchemes,
 } from '../../services/api/errors.js'
@@ -276,37 +276,65 @@ describe('buildEmptyFallbackErrorMessage', () => {
  * an exhausted retry must still show the diagnostic rather than a generic
  * connection message.
  */
-describe('EmptyFallbackRetryableError', () => {
+describe('empty non-streaming fallback retry', () => {
   const DIAG =
     'API Error: The provider returned an empty response after the streaming connection was interrupted. [diagnostic: stream_error=Stream ended without receiving any events; route=proxy http://proxy.corp.example:8080; proxy_source=pac]'
 
-  test('is an APIConnectionError, which is what makes withRetry retry it', () => {
-    // withRetry drops any error failing `error instanceof APIError` before
-    // shouldRetry() is consulted, and shouldRetry() returns true for
-    // APIConnectionError. A plain Error here is exactly why the turn used to end.
-    const err = new EmptyFallbackRetryableError(DIAG)
-    expect(err).toBeInstanceOf(APIConnectionError)
+
+
+
+  test('ACTUALLY re-runs the fallback until it returns content', async () => {
+    // The assertion two releases were missing. v0.2.26 and v0.2.27 "retried"
+    // by throwing a retryable error into withRetry - which never sees it,
+    // because the non-streaming fallback runs outside withRetry's loop. The
+    // turn ended on the first empty body while the release notes said it
+    // retried. Counting invocations is the only thing that proves otherwise.
+    let calls = 0
+    async function* attemptOnce() {
+      calls++
+      return calls < 3 ? { content: [] } : { content: ['hi'] }
+    }
+    const out = await runEmptyFallbackWithRetry(
+      attemptOnce,
+      r => r.content.length === 0,
+      () => true,
+      async () => {},
+    ).next()
+    expect(calls).toBe(3)
+    expect(out.value).toEqual({ result: { content: ['hi'] }, attempts: 3 })
   })
 
-  test('its message avoids the word timeout, which would erase the diagnostic', () => {
-    // getAssistantMessageFromError replaces any APIConnectionError whose message
-    // mentions "timeout" with a generic string. The diagnostic can quote a proxy
-    // page containing that word, so the message must stay fixed.
-    const err = new EmptyFallbackRetryableError(
-      'API Error: gateway timeout page said timeout',
-    )
-    expect(err.message.toLowerCase()).not.toContain('timeout')
-    expect(err.diagnosticContent).toContain('timeout')
+  test('stops re-running when the decision says the body cannot change', async () => {
+    // Control: without this, "it retries" could be true because it retries
+    // forever, which on a real block page would hang the turn indefinitely.
+    let calls = 0
+    async function* attemptOnce() {
+      calls++
+      return { content: [] }
+    }
+    const out = await runEmptyFallbackWithRetry(
+      attemptOnce,
+      () => true,
+      (_r, attempt) => attempt < 2,
+      async () => {},
+    ).next()
+    expect(calls).toBe(2)
+    expect((out.value as { attempts: number }).attempts).toBe(2)
   })
 
-  test('an exhausted retry still surfaces the diagnostic, not a generic error', () => {
-    const msg = getAssistantMessageFromError(
-      new EmptyFallbackRetryableError(DIAG),
-      'claude-sonnet-5',
-    )
-    const text = JSON.stringify(msg.message.content)
-    expect(text).toContain('proxy_source=pac')
-    expect(text).toContain('Stream ended without receiving any events')
+  test('does not re-run when the very first result is usable', async () => {
+    let calls = 0
+    async function* attemptOnce() {
+      calls++
+      return { content: ['hi'] }
+    }
+    await runEmptyFallbackWithRetry(
+      attemptOnce,
+      r => r.content.length === 0,
+      () => true,
+      async () => {},
+    ).next()
+    expect(calls).toBe(1)
   })
 
   test('retries a connection-shaped empty fallback on every attempt', () => {
