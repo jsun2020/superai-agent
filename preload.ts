@@ -1,5 +1,5 @@
 // Keep in sync with desktop/src-tauri/tauri.conf.json (scripts/release.ts bumps both).
-const version = process.env.CLAUDE_CODE_LOCAL_VERSION ?? '0.2.24';
+const version = process.env.CLAUDE_CODE_LOCAL_VERSION ?? '0.2.25';
 const packageUrl = process.env.CLAUDE_CODE_LOCAL_PACKAGE_URL ?? 'claude-code-local';
 const buildTime = process.env.CLAUDE_CODE_LOCAL_BUILD_TIME ?? new Date().toISOString();
 
