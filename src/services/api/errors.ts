@@ -423,6 +423,108 @@ export function extractUnknownErrorFormat(value: unknown): string | undefined {
 }
 
 /**
+ * Strips credentials from a proxy URL before it is shown on screen.
+ *
+ * A corporate proxy URL routinely embeds `user:password@`, and this string ends
+ * up in error bubbles, screenshots and bug reports. An unparseable value is
+ * reported only by shape — it may still contain a password.
+ */
+export function redactProxyUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    // `new URL('alice:hunter2@@@')` does NOT throw — it parses as scheme
+    // `alice:` with an opaque path, and would echo the password verbatim.
+    // A usable proxy URL always has a host, so require one.
+    if (!parsed.hostname) throw new Error('proxy URL has no host')
+    if (parsed.username || parsed.password) {
+      parsed.username = 'REDACTED'
+      parsed.password = ''
+    }
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return `<unparseable, ${url.length} chars>`
+  }
+}
+
+/**
+ * Describes HOW this machine reaches the provider: through which proxy, and
+ * where that proxy came from.
+ *
+ * This is the field that answers "why does my colleague's identical machine
+ * work". A direct request and an intercepted one are indistinguishable from
+ * inside the app, but they differ entirely in `route=` — and `proxy_source=`
+ * says whether the value came from Settings, the environment, or the OS.
+ */
+/**
+ * The proxy this process will actually use, or '' when it routes directly.
+ * Shared so the diagnostic tail and the headline can never disagree about
+ * whether a proxy was involved.
+ */
+export function configuredProxyUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return (
+    env.HTTPS_PROXY ||
+    env.https_proxy ||
+    env.HTTP_PROXY ||
+    env.http_proxy ||
+    ''
+  ).trim()
+}
+
+export function describeNetworkRoute(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const proxy = configuredProxyUrl(env)
+  const source = env.SUPERAI_PROXY_SOURCE || 'unknown'
+  return proxy
+    ? `route=proxy ${redactProxyUrl(proxy)}; proxy_source=${source}`
+    : `route=direct; proxy_source=${source}`
+}
+
+/**
+ * Names the authentication schemes a 407 demanded, lowercased and deduped.
+ *
+ * The scheme decides whether the user can fix this at all: Basic credentials go
+ * straight into the proxy URL, while NTLM and Negotiate are challenge-response
+ * handshakes this app does not implement - and saying so is far kinder than
+ * letting someone type their password in repeatedly.
+ */
+export function parseProxyAuthSchemes(
+  headers: { get(name: string): string | null | undefined } | undefined,
+): string[] {
+  const raw = headers?.get('proxy-authenticate')
+  if (!raw) return []
+  const schemes = raw
+    .split(',')
+    .map(part => part.trim().match(/^([A-Za-z]+)/)?.[1]?.toLowerCase())
+    .filter((s): s is string => Boolean(s))
+  return [...new Set(schemes)]
+}
+
+/**
+ * The user-facing message for a 407, with the proxy named (credentials
+ * stripped) and the scheme's consequence spelled out.
+ */
+export function buildProxyAuthErrorMessage(
+  error: { headers?: { get(name: string): string | null | undefined } },
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const schemes = parseProxyAuthSchemes(error.headers)
+  const proxy = configuredProxyUrl(env)
+  const via = proxy ? ` (${redactProxyUrl(proxy)})` : ''
+  const unsupported = schemes.filter(s => s === 'ntlm' || s === 'negotiate')
+
+  const advice = unsupported.length
+    ? `It is asking for ${unsupported.join('/')} authentication, which this app cannot perform - only username/password (Basic) is supported. Ask whoever administers the proxy for a Basic-auth account or an exemption for this machine.`
+    : schemes.length
+      ? `It is asking for ${schemes.join('/')} authentication. Enter the username and password in Settings -> Proxy (or as user:password@host:port in the proxy URL).`
+      : `Enter the proxy username and password in Settings -> Proxy (or as user:password@host:port in the proxy URL). If the proxy uses Windows sign-on (NTLM/Negotiate) rather than a password, this app cannot authenticate to it.`
+
+  return `${API_ERROR_MESSAGE_PREFIX}: The HTTP proxy${via} refused the request because it requires authentication (407). ${advice} [diagnostic: proxy_auth=${schemes.length ? schemes.join(',') : 'unspecified'}; ${describeNetworkRoute(env)}]`
+}
+
+/**
  * A non-streaming fallback that came back empty for a reason a fresh request
  * can plausibly clear (a dropped connection, a truncated tunnel) rather than a
  * deterministic refusal.
@@ -461,6 +563,19 @@ export function getAssistantMessageFromError(
   if (error instanceof EmptyFallbackRetryableError) {
     return createAssistantAPIErrorMessage({
       content: error.diagnosticContent,
+      error: 'server_error',
+    })
+  }
+
+  // 407 Proxy Authentication Required. Without this branch the user sees
+  // "API Error: 407 status code (no body)" - the proxy sends no body, so there
+  // is nothing else to show - which names neither the proxy nor the fix. The
+  // Settings "test proxy" button already explains 407 properly
+  // (proxySettingsService.parseConnectResponse); this brings the same answer to
+  // the path people actually hit.
+  if (error instanceof APIError && error.status === 407) {
+    return createAssistantAPIErrorMessage({
+      content: buildProxyAuthErrorMessage(error),
       error: 'server_error',
     })
   }

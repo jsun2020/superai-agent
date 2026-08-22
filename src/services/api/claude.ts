@@ -231,7 +231,9 @@ import { withStreamingVCR, withVCR } from '../vcr.js'
 import { CLIENT_REQUEST_ID_HEADER, getAnthropicClient } from './client.js'
 import {
   API_ERROR_MESSAGE_PREFIX,
+  configuredProxyUrl,
   CUSTOM_OFF_SWITCH_MESSAGE,
+  describeNetworkRoute,
   EmptyFallbackRetryableError,
   getAssistantMessageFromError,
   getErrorMessageIfRefusal,
@@ -2617,16 +2619,13 @@ async function* queryModel(
           `Non-streaming fallback returned a response with zero content blocks: ${content}`,
           { level: 'error' },
         )
-        // A proxy block page is a policy decision: the same request produces the
-        // same page every time, so retrying only makes the user wait for an
-        // answer that cannot change. Anything else that lands here is
-        // connection-level - a dropped stream whose fallback also came back with
-        // nothing - and a fresh request usually clears it. Until now BOTH cases
-        // ended the turn, and the message even told the user to "try again",
-        // which is the retry we already know how to do: on an unstable link that
-        // turns every query into a manual retry ritual. Hand the transient case
-        // to withRetry's backoff instead.
-        if (shouldRetryEmptyFallback(result)) {
+        // Both a dropped connection and a proxy block page can clear on their
+        // own here - see shouldRetryEmptyFallback for why the block page is not
+        // the deterministic policy answer it looks like. Ending the turn instead
+        // of retrying is what made the user retry by hand, sending "hi?" until
+        // the app answered; the message even told them to "try again", which is
+        // the retry we already know how to do.
+        if (shouldRetryEmptyFallback(result, attemptNumber)) {
           throw new EmptyFallbackRetryableError(content)
         }
         yield createAssistantAPIErrorMessage({
@@ -3494,78 +3493,37 @@ function looksLikeHtml(body: string): boolean {
 /**
  * Should an empty non-streaming fallback be retried automatically?
  *
- * Yes for anything connection-shaped: the stream died and the fallback brought
- * back nothing usable, which a fresh request usually clears. No for an HTML
- * block page - that is a filtering policy, so every attempt returns the same
- * page and retrying only makes the user wait for an answer that cannot change.
+ * Connection-shaped failures (no body, or a non-HTML rewrite) get the full
+ * retry budget: the stream died and the fallback brought back nothing usable,
+ * which a fresh request usually clears.
+ *
+ * Block pages get a SMALL number of attempts. v0.2.26 gave them none, on the
+ * reasoning that a filtering policy returns the same page every time so
+ * retrying could only make the user wait. Field evidence disproved that: on a
+ * corporate proxy the SAME provider URL alternates between a "URL filter"
+ * page and a normal reply within seconds - the appliance appears to apply its
+ * default-deny policy whenever it cannot attribute the connection to an
+ * authenticated user, which is also why the same link intermittently answers
+ * 407. So the page is not deterministic and must be retried. It still must not
+ * consume the full budget: a genuinely blocked host has to fail fast rather
+ * than after ten backoffs.
+ *
+ * `attempt` is 1-based, matching withRetry's loop.
  *
  * Extracted so the decision is testable: it is reached from deep inside the
  * streaming generator, which has no test harness here.
  */
-export function shouldRetryEmptyFallback(result: BetaMessage): boolean {
+export const BLOCK_PAGE_MAX_ATTEMPTS = 3
+
+export function shouldRetryEmptyFallback(
+  result: BetaMessage,
+  attempt: number,
+): boolean {
   const body = getNonJsonFallbackBody(result)
-  return body === null || !looksLikeHtml(body)
+  if (body === null || !looksLikeHtml(body)) return true
+  return attempt < BLOCK_PAGE_MAX_ATTEMPTS
 }
 
-/**
- * Strips credentials from a proxy URL before it is shown on screen.
- *
- * A corporate proxy URL routinely embeds `user:password@`, and this string ends
- * up in error bubbles, screenshots and bug reports. An unparseable value is
- * reported only by shape — it may still contain a password.
- */
-function redactProxyUrl(url: string): string {
-  try {
-    const parsed = new URL(url)
-    // `new URL('alice:hunter2@@@')` does NOT throw — it parses as scheme
-    // `alice:` with an opaque path, and would echo the password verbatim.
-    // A usable proxy URL always has a host, so require one.
-    if (!parsed.hostname) throw new Error('proxy URL has no host')
-    if (parsed.username || parsed.password) {
-      parsed.username = 'REDACTED'
-      parsed.password = ''
-    }
-    return parsed.toString().replace(/\/$/, '')
-  } catch {
-    return `<unparseable, ${url.length} chars>`
-  }
-}
-
-/**
- * Describes HOW this machine reaches the provider: through which proxy, and
- * where that proxy came from.
- *
- * This is the field that answers "why does my colleague's identical machine
- * work". A direct request and an intercepted one are indistinguishable from
- * inside the app, but they differ entirely in `route=` — and `proxy_source=`
- * says whether the value came from Settings, the environment, or the OS.
- */
-/**
- * The proxy this process will actually use, or '' when it routes directly.
- * Shared so the diagnostic tail and the headline can never disagree about
- * whether a proxy was involved.
- */
-function configuredProxyUrl(
-  env: Record<string, string | undefined> = process.env,
-): string {
-  return (
-    env.HTTPS_PROXY ||
-    env.https_proxy ||
-    env.HTTP_PROXY ||
-    env.http_proxy ||
-    ''
-  ).trim()
-}
-
-export function describeNetworkRoute(
-  env: Record<string, string | undefined> = process.env,
-): string {
-  const proxy = configuredProxyUrl(env)
-  const source = env.SUPERAI_PROXY_SOURCE || 'unknown'
-  return proxy
-    ? `route=proxy ${redactProxyUrl(proxy)}; proxy_source=${source}`
-    : `route=direct; proxy_source=${source}`
-}
 
 /**
  * Builds the user-facing error for a non-streaming fallback that carried zero

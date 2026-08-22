@@ -6,18 +6,37 @@
  * identify the culprit on a machine we cannot access.
  */
 import { describe, expect, test } from 'bun:test'
-import { APIConnectionError, APIConnectionTimeoutError } from '@anthropic-ai/sdk'
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+} from '@anthropic-ai/sdk'
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import {
   buildEmptyFallbackErrorMessage,
   describeEmptyFallbackResponse,
-  describeNetworkRoute,
+  BLOCK_PAGE_MAX_ATTEMPTS,
   shouldRetryEmptyFallback,
 } from '../../services/api/claude.js'
 import {
+  buildProxyAuthErrorMessage,
+  describeNetworkRoute,
   EmptyFallbackRetryableError,
   getAssistantMessageFromError,
+  parseProxyAuthSchemes,
 } from '../../services/api/errors.js'
+import {
+  PROXY_AUTH_MAX_ATTEMPTS,
+  shouldRetry,
+} from '../../services/api/withRetry.js'
+
+/** Minimal stand-in for the SDK's Headers on an APIError. */
+function headersOf(value?: string) {
+  return {
+    get: (name: string) =>
+      name.toLowerCase() === 'proxy-authenticate' ? (value ?? null) : null,
+  }
+}
 
 function asBetaMessage(obj: Record<string, unknown>): BetaMessage {
   return obj as unknown as BetaMessage
@@ -261,25 +280,129 @@ describe('EmptyFallbackRetryableError', () => {
     expect(text).toContain('Stream ended without receiving any events')
   })
 
-  test('retries a connection-shaped empty fallback, but never a block page', () => {
+  test('retries a connection-shaped empty fallback on every attempt', () => {
     // A dropped stream leaves no body at all: retry it.
     expect(
-      shouldRetryEmptyFallback(asBetaMessage({ id: 'm', content: [] })),
+      shouldRetryEmptyFallback(asBetaMessage({ id: 'm', content: [] }), 1),
     ).toBe(true)
     // A non-HTML rewrite (gateway text) is still connection-shaped: retry it.
     expect(
       shouldRetryEmptyFallback(
         'upstream connect error or disconnect/reset before headers' as unknown as BetaMessage,
+        9,
       ),
     ).toBe(true)
-    // The proxy's own filter page is a policy decision - identical every time,
-    // so retrying it just makes the user wait. This is the case that must NOT
-    // retry, and it is the one the corporate Win11 machine hits.
+  })
+
+  test('retries a block page a few times, then stops', () => {
+    // v0.2.26 gave block pages ZERO retries, assuming a filter page is the same
+    // every time. The corporate proxy disproved it: the same provider URL is
+    // refused and then served within seconds. So early attempts must retry...
     expect(
-      shouldRetryEmptyFallback(URL_FILTER_PAGE as unknown as BetaMessage),
+      shouldRetryEmptyFallback(URL_FILTER_PAGE as unknown as BetaMessage, 1),
+    ).toBe(true)
+    expect(
+      shouldRetryEmptyFallback(INTERCEPT_PAGE as unknown as BetaMessage, 1),
+    ).toBe(true)
+    // ...but a genuinely blocked host must still fail fast rather than after
+    // the full ten-attempt budget.
+    expect(
+      shouldRetryEmptyFallback(
+        URL_FILTER_PAGE as unknown as BetaMessage,
+        BLOCK_PAGE_MAX_ATTEMPTS,
+      ),
     ).toBe(false)
+    expect(BLOCK_PAGE_MAX_ATTEMPTS).toBeLessThan(10)
+  })
+
+  test('a 407 explains proxy auth instead of "407 status code (no body)"', () => {
+    // A 407 carries no body, so the default message is literally
+    // "API Error: 407 status code (no body)" - it names neither the proxy nor
+    // anything the user can act on.
+    const msg = buildProxyAuthErrorMessage(
+      { headers: headersOf('Basic realm="corp"') },
+      {
+        HTTPS_PROXY: 'http://proxy.corp.example:8080',
+        SUPERAI_PROXY_SOURCE: 'settings',
+      },
+    )
+    expect(msg).toContain('requires authentication (407)')
+    expect(msg).toContain('proxy.corp.example:8080')
+    expect(msg).toContain('Settings')
+    expect(msg).toContain('proxy_source=settings')
+  })
+
+  test('a 407 demanding NTLM says so, rather than inviting a password', () => {
+    const msg = buildProxyAuthErrorMessage(
+      { headers: headersOf('Negotiate, NTLM') },
+      { HTTPS_PROXY: 'http://proxy.corp.example:8080' },
+    )
+    // Telling someone to type a password into a field that cannot possibly
+    // work is worse than saying plainly that we cannot do this handshake.
+    expect(msg).toContain('cannot perform')
+    expect(msg).toContain('ntlm')
+    expect(msg).toContain('proxy_auth=negotiate,ntlm')
+  })
+
+  test('never echoes proxy credentials into the 407 message', () => {
+    const msg = buildProxyAuthErrorMessage(
+      { headers: headersOf('Basic') },
+      { HTTPS_PROXY: 'http://alice:hunter2@proxy.corp.example:8080' },
+    )
+    expect(msg).not.toContain('hunter2')
+    expect(msg).not.toContain('alice')
+    expect(msg).toContain('REDACTED')
+  })
+
+  test('parses Proxy-Authenticate, and copes with its absence', () => {
+    expect(parseProxyAuthSchemes(headersOf('NTLM'))).toEqual(['ntlm'])
+    expect(parseProxyAuthSchemes(headersOf('Negotiate, NTLM, Basic'))).toEqual([
+      'negotiate',
+      'ntlm',
+      'basic',
+    ])
+    // Deduped - proxies repeat schemes across multiple header lines.
+    expect(parseProxyAuthSchemes(headersOf('NTLM, ntlm'))).toEqual(['ntlm'])
+    expect(parseProxyAuthSchemes(headersOf())).toEqual([])
+    expect(parseProxyAuthSchemes(undefined)).toEqual([])
+  })
+
+  test('still advises when the proxy sends no Proxy-Authenticate header', () => {
+    const msg = buildProxyAuthErrorMessage({ headers: headersOf() }, {})
+    expect(msg).toContain('requires authentication (407)')
+    expect(msg).toContain('proxy_auth=unspecified')
+    // No proxy configured in env - must not render an empty parenthesis.
+    expect(msg).not.toContain('()')
+  })
+
+  test('the 407 branch is actually wired into the message the user sees', () => {
+    // The tests above exercise the builder directly; this one proves
+    // getAssistantMessageFromError routes a real 407 to it. Without this, the
+    // builder could be perfect and dead - the gap I shipped twice before.
+    const msg = getAssistantMessageFromError(
+      new APIError(407, undefined, '407 status code (no body)', headersOf(
+        'NTLM',
+      ) as unknown as Headers),
+      'claude-sonnet-5',
+    )
+    const text = JSON.stringify(msg.message.content)
+    expect(text).toContain('requires authentication (407)')
+    expect(text).not.toContain('no body')
+  })
+
+  test('a 407 is retried a bounded number of times, not zero and not ten', () => {
+    const err = new APIError(407, undefined, 'proxy auth', undefined)
+    // Zero retries was the old behaviour: an intermittently-authorising proxy
+    // ended the turn on the first refusal.
+    expect(shouldRetry(err, 1)).toBe(true)
+    // A proxy that always demands NTLM must not burn the whole budget in
+    // backoff before telling the user what is wrong.
+    expect(shouldRetry(err, PROXY_AUTH_MAX_ATTEMPTS)).toBe(false)
+    expect(PROXY_AUTH_MAX_ATTEMPTS).toBeLessThan(10)
+    // Control: an unrelated 4xx is still not retried, so the new branch did not
+    // widen retrying in general.
     expect(
-      shouldRetryEmptyFallback(INTERCEPT_PAGE as unknown as BetaMessage),
+      shouldRetry(new APIError(400, undefined, 'bad request', undefined), 1),
     ).toBe(false)
   })
 

@@ -376,7 +376,7 @@ export async function* withRetry<T>(
         handleAwsCredentialError(error) || handleGcpCredentialError(error)
       if (
         !handledCloudAuthError &&
-        (!(error instanceof APIError) || !shouldRetry(error))
+        (!(error instanceof APIError) || !shouldRetry(error, attempt))
       ) {
         throw new CannotRetryError(error, retryContext)
       }
@@ -693,7 +693,17 @@ function handleGcpCredentialError(error: unknown): boolean {
   return false
 }
 
-function shouldRetry(error: APIError): boolean {
+/**
+ * How many attempts a 407 gets. A corporate proxy commonly authorises per
+ * source IP for a few minutes, so a request landing just after that window
+ * expires is refused while the next one succeeds - worth retrying. But a proxy
+ * demanding NTLM/Negotiate, which this app cannot speak, will answer 407
+ * forever; giving that the full budget would turn an instant, fixable error
+ * into minutes of backoff before the user is told what is wrong.
+ */
+export const PROXY_AUTH_MAX_ATTEMPTS = 3
+
+export function shouldRetry(error: APIError, attempt: number): boolean {
   // Never retry mock errors - they're from /mock-limits command for testing
   if (isMockRateLimitError(error)) {
     return false
@@ -779,6 +789,9 @@ function shouldRetry(error: APIError): boolean {
   if (isOAuthTokenRevokedError(error)) {
     return true
   }
+
+  // Proxy Authentication Required. Bounded — see PROXY_AUTH_MAX_ATTEMPTS.
+  if (error.status === 407) return attempt < PROXY_AUTH_MAX_ATTEMPTS
 
   // Retry internal errors.
   if (error.status && error.status >= 500) return true
