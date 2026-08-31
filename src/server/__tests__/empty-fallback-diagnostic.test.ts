@@ -15,6 +15,7 @@ import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/mess
 import {
   buildEmptyFallbackErrorMessage,
   describeEmptyFallbackResponse,
+  extractHtmlMessage,
   BLOCK_PAGE_MAX_ATTEMPTS,
   runEmptyFallbackWithRetry,
   shouldRetryEmptyFallback,
@@ -95,6 +96,47 @@ describe('describeEmptyFallbackResponse', () => {
     expect(diag).not.toContain('response_keys=0,1,2')
   })
 
+  test('quotes a block page\'s readable text, not its markup', () => {
+    // Verbatim shape from the corporate proxy. The first 300 raw characters are
+    // entirely boilerplate - charset meta, stylesheet link, opening <script> -
+    // so quoting the source pushed "URL filter" and "access denied" past the
+    // cut and filled the error with noise.
+    const page =
+      '<html><head> <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> <title>URL Filter</title> <link href="../css/terminal.css" rel="stylesheet" type="text/css"> <script language="JavaScript" type="text/JavaScript"> function bodyOnLoad() { var x = 1; } </script></head><body>access denied</body></html>'
+    const diag = describeEmptyFallbackResponse(
+      page as unknown as BetaMessage,
+      'Stream ended without receiving any events',
+    )
+    expect(diag).toContain('body_title="URL Filter"')
+    expect(diag).toContain('access denied')
+    // the markup and the page's own JavaScript must NOT be quoted
+    expect(diag).not.toContain('stylesheet')
+    expect(diag).not.toContain('bodyOnLoad')
+    expect(diag).not.toContain('http-equiv')
+    // the true size is still reported, since it identifies the page
+    expect(diag).toContain(`body_len=${page.length}`)
+  })
+
+  test('a non-HTML body is still quoted verbatim (control)', () => {
+    // Without this, "markup is stripped" could be true because everything is.
+    const diag = describeEmptyFallbackResponse(
+      'upstream connect error or disconnect/reset before headers' as unknown as BetaMessage,
+      'terminated',
+    )
+    expect(diag).toContain('upstream connect error')
+    expect(diag).not.toContain('body_title=')
+  })
+
+  test('extractHtmlMessage copes with no title and with nested markup', () => {
+    expect(extractHtmlMessage('<html><body><p>hi <b>there</b></p></body></html>'))
+      .toEqual({ title: '', text: 'hi there' })
+    // An unterminated script must not swallow the whole document silently -
+    // the tag strip still runs, so some readable text survives.
+    const odd = extractHtmlMessage('<html><title> A </title><body>B</body>')
+    expect(odd.title).toBe('A')
+    expect(odd.text).toContain('B')
+  })
+
   test('bounds a huge key list instead of flooding the message', () => {
     const many: Record<string, unknown> = {}
     for (let i = 0; i < 200; i++) many[`k${i}`] = i
@@ -168,10 +210,16 @@ describe('buildEmptyFallbackErrorMessage', () => {
     )
     // The actionable half: the route is already correct, so telling the user
     // something is "intercepting" would send them to fix a setting that is fine.
-    expect(msg).toContain('refused this URL')
+    expect(msg).toContain('refused this request')
     expect(msg).toContain('filtering policy on the proxy')
-    expect(msg).toContain('not a missing proxy setting')
+    expect(msg).toContain('missing proxy setting')
     expect(msg).not.toContain('captive portal')
+    // The step that helps in the next few seconds must come before the ones
+    // that take days (an IT allowlist request, switching provider).
+    expect(msg).toContain('sending your message again often gets through')
+    expect(msg.indexOf('sending your message again')).toBeLessThan(
+      msg.indexOf('ask whoever administers'),
+    )
     // the diagnostic tail still identifies which proxy and where it came from
     expect(msg).toContain('route=proxy http://proxy.corp.example:8080')
     expect(msg).toContain('proxy_source=settings')
@@ -237,7 +285,7 @@ describe('buildEmptyFallbackErrorMessage', () => {
     )
     expect(msg).toContain('https://api.minimaxi.com/anthropic/v1')
     expect(msg).toContain('proxy_source=pac')
-    expect(msg).toContain('refused this URL')
+    expect(msg).toContain('refused this request')
   })
 
   test('distinguishes a non-HTML non-JSON body from an HTML one', () => {

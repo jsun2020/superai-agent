@@ -3511,6 +3511,33 @@ function looksLikeHtml(body: string): boolean {
 }
 
 /**
+ * The human-readable parts of an HTML block page: its title, and its visible
+ * text with script/style/markup removed.
+ *
+ * A filter appliance's page is mostly boilerplate - charset meta, a stylesheet
+ * link, a block of JavaScript - so quoting it verbatim fills the error with
+ * noise and pushes the two words that identify it ("URL filter", "access
+ * denied") past any sensible truncation. Users described the resulting error as
+ * a wall of red text.
+ */
+export function extractHtmlMessage(html: string): {
+  title: string
+  text: string
+} {
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? ''
+  const text = html
+    // Drop script/style CONTENT, not just their tags - otherwise the page's
+    // JavaScript becomes the "readable" text.
+    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+  return {
+    title: title.replace(/\s+/g, ' ').trim(),
+    text: text.replace(/\s+/g, ' ').trim(),
+  }
+}
+
+/**
  * Should an empty non-streaming fallback be retried automatically?
  *
  * Connection-shaped failures (no body, or a non-HTML rewrite) get the full
@@ -3616,7 +3643,12 @@ export function buildEmptyFallbackErrorMessage(
             // That is an allowlist / URL-filter decision on the proxy itself, so
             // "something is intercepting you" would point the user at the wrong
             // problem - the route is already correct and only policy can change.
-            `The proxy this app routes through returned a web page instead of the model's reply${target} - its text is below. The proxy accepted the connection and then refused this URL, so this is a filtering policy on the proxy, not a provider outage and not a missing proxy setting. Ask whoever administers the proxy to allow the provider's host, or use a provider your network already permits.`
+            // The refusal is intermittent: the same request is served moments
+            // later, and users worked that out for themselves by resending
+            // until it went through. Say so first - it is the only step that
+            // helps in the next few seconds, and the alternatives (an IT
+            // allowlist request, a different provider) are days away.
+            `The proxy this app routes through refused this request${target} and returned a filter page instead of the model's reply. This is intermittent - the app already retried, and sending your message again often gets through. If it keeps happening, this is a filtering policy on the proxy rather than a provider outage or a missing proxy setting: ask whoever administers the proxy to allow the provider's host, or switch to a provider your network already permits.`
           : `The network returned an HTML page instead of a model response. A proxy, firewall or captive portal is intercepting requests${target} - the page text is below. This is a network configuration issue, not a provider outage.`
         : `The network returned a non-JSON response instead of a model response, which usually means something between this machine and the provider rewrote the reply${target}. The body is below.`
       : 'The provider returned an empty response after the streaming connection was interrupted. This is usually a network proxy or provider-side issue — please try again.'
@@ -3644,6 +3676,21 @@ export function describeEmptyFallbackResponse(
   const rawUnknown = result as unknown
   if (typeof rawUnknown !== 'object' || rawUnknown === null) {
     const text = typeof rawUnknown === 'string' ? rawUnknown : String(rawUnknown)
+    // For an HTML block page the first 300 raw characters are all markup - a
+    // charset meta, a stylesheet link, the opening <script> - and the two words
+    // that actually identify the page ("URL filter", "access denied") sit past
+    // the cut. Show the readable text instead: it is both shorter and the only
+    // part anyone can act on.
+    if (looksLikeHtml(text)) {
+      const { title, text: readable } = extractHtmlMessage(text)
+      return [
+        streamPart,
+        'body_type=string (not JSON)',
+        `body_len=${text.length}`,
+        ...(title ? [`body_title=${JSON.stringify(title.slice(0, 80))}`] : []),
+        `body_text=${JSON.stringify(readable.slice(0, 200))}`,
+      ].join('; ')
+    }
     return [
       streamPart,
       `body_type=${typeof rawUnknown} (not JSON)`,
