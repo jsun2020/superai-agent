@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from '../../i18n'
 import { isTauriRuntime } from '../../lib/desktopRuntime'
+import { VoiceInputButton } from './VoiceInputButton'
+import { insertAtCaret } from '../../lib/insertAtCaret'
 import { useChatStore } from '../../stores/chatStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -53,6 +55,34 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
   const composingRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * Place a finished transcript into the composer.
+   *
+   * Inserted at the caret rather than appended or assigned, so dictating in the
+   * middle of a half-typed message does what the user meant, and never discards
+   * text they already had. A space is added only where one is actually missing.
+   */
+  const insertDictatedText = useCallback((text: string) => {
+    setInput((current) => {
+      const el = textareaRef.current
+      const { next, caret } = insertAtCaret(
+        current,
+        el?.selectionStart ?? current.length,
+        text,
+      )
+      if (next === current) return current
+      // Restore the caret after React has written the value, otherwise it jumps
+      // to the end and the next utterance lands in the wrong place.
+      requestAnimationFrame(() => {
+        const node = textareaRef.current
+        if (!node) return
+        node.focus()
+        node.setSelectionRange(caret, caret)
+      })
+      return next
+    })
+  }, [])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
   const slashMenuRef = useRef<HTMLDivElement>(null)
@@ -689,6 +719,8 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
                       </div>
                     )}
                   </div>
+
+                  <VoiceInputButton onFinal={insertDictatedText} disabled={isActive} />
 
                   <PermissionModeSelector />
                 </>

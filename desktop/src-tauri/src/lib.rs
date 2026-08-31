@@ -105,6 +105,72 @@ fn get_server_url(state: State<'_, ServerState>) -> Result<String, String> {
 ///      并重新建立 WebSocket 连接到飞书 / Telegram
 ///
 /// 凭据缺失时 sidecar 自己会 warn + skip + 退出，所以这里不需要前置检查。
+/// Where TypeFree publishes the loopback bridge's port and token.
+///
+/// The webview cannot read this itself, which is the whole point: the token is
+/// a capability that lets its holder switch on the microphone, so it lives in a
+/// 0600 file in the user's profile rather than anywhere a web page could reach.
+/// Only this command, running in our own process, hands it to our own UI.
+#[cfg(target_os = "windows")]
+fn typefree_bridge_file() -> Option<std::path::PathBuf> {
+    // Electron's userData for productName "TypeFree".
+    std::env::var_os("APPDATA")
+        .map(|appdata| std::path::PathBuf::from(appdata).join("TypeFree").join("bridge.json"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn typefree_bridge_file() -> Option<std::path::PathBuf> {
+    // TypeFree is Windows-only today. Returning None keeps the UI's
+    // "not available" path exercised on other platforms rather than guessing.
+    None
+}
+
+/// Port and token for a running TypeFree, or None when it is not running.
+///
+/// Absence is the normal case, not an error: most users will not have TypeFree
+/// installed, and the composer simply does not offer voice input then.
+#[tauri::command]
+fn typefree_bridge_info() -> Option<serde_json::Value> {
+    let path = typefree_bridge_file()?;
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let port = parsed.get("port")?.as_u64()?;
+    let token = parsed.get("token")?.as_str()?.to_string();
+    // A stale file outlives a crashed TypeFree. Reporting the port anyway would
+    // make the UI offer a mic button that can never connect, so require the
+    // process to still exist.
+    let pid = parsed.get("pid").and_then(|v| v.as_u64());
+    if let Some(pid) = pid {
+        if !typefree_process_alive(pid) {
+            return None;
+        }
+    }
+    Some(serde_json::json!({ "port": port, "token": token }))
+}
+
+/// Is a process with this pid still running?
+#[cfg(target_os = "windows")]
+fn typefree_process_alive(pid: u64) -> bool {
+    // `tasklist` avoids adding a process-inspection dependency for one check.
+    // A failure to run it is treated as "alive" so a sandboxed environment
+    // degrades to the old behaviour rather than hiding a working bridge.
+    match std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+        .output()
+    {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            text.contains(&pid.to_string())
+        }
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn typefree_process_alive(_pid: u64) -> bool {
+    true
+}
+
 #[tauri::command]
 fn restart_adapters_sidecar(app: AppHandle) -> Result<(), String> {
     stop_adapters_sidecar(&app);
@@ -1435,7 +1501,8 @@ pub fn run() {
             terminal_spawn,
             terminal_write,
             terminal_resize,
-            terminal_kill
+            terminal_kill,
+            typefree_bridge_info
         ]);
 
     // macOS: native menu bar (traffic-light overlay style)
