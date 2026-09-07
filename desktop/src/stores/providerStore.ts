@@ -9,6 +9,7 @@ import type {
   CreateProviderInput,
   UpdateProviderInput,
   TestProviderConfigInput,
+  TestProviderOverrides,
   ProviderTestResult,
 } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -29,7 +30,7 @@ type ProviderStore = {
   activateProvider: (id: string) => Promise<void>
   activateOfficial: () => Promise<void>
   activateOpenAICodexOfficial: () => Promise<void>
-  testProvider: (id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) => Promise<ProviderTestResult>
+  testProvider: (id: string, overrides?: TestProviderOverrides) => Promise<ProviderTestResult>
   testConfig: (input: TestProviderConfigInput) => Promise<ProviderTestResult>
 }
 

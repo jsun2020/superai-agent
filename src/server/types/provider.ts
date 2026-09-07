@@ -21,6 +21,25 @@ export const ModelMappingSchema = z.object({
   opus: z.string(),
 })
 
+/**
+ * Upstream authentication beyond a plain bearer key.
+ *
+ * `oauth2_client_credentials`: the proxy POSTs `grant_type=client_credentials`
+ * to `tokenUrl`, sends the resulting token as `Authorization: Bearer`, and
+ * sends the provider's `apiKey` as `X-API-KEY`. This is the shape enterprise
+ * API gateways commonly use. Only meaningful for proxied formats — a native
+ * Anthropic provider is called by the CLI directly, which cannot do the dance.
+ */
+export const ProviderAuthSchema = z.object({
+  type: z.literal('oauth2_client_credentials'),
+  tokenUrl: z.string().min(1),
+  clientId: z.string().min(1),
+  // Empty on update means "keep the stored secret", mirroring apiKey.
+  clientSecret: z.string(),
+  scope: z.string().optional(),
+})
+export type ProviderAuth = z.infer<typeof ProviderAuthSchema>
+
 export const SavedProviderSchema = z.object({
   id: z.string(),
   presetId: z.string(),
@@ -30,6 +49,7 @@ export const SavedProviderSchema = z.object({
   apiFormat: ApiFormatSchema.default('anthropic'),
   models: ModelMappingSchema,
   notes: z.string().optional(),
+  auth: ProviderAuthSchema.optional(),
 })
 
 export const ProvidersIndexSchema = z.object({
@@ -45,6 +65,7 @@ export const CreateProviderSchema = z.object({
   apiFormat: ApiFormatSchema.default('anthropic'),
   models: ModelMappingSchema,
   notes: z.string().optional(),
+  auth: ProviderAuthSchema.optional(),
 })
 
 export const UpdateProviderSchema = z.object({
@@ -54,6 +75,8 @@ export const UpdateProviderSchema = z.object({
   apiFormat: ApiFormatSchema.optional(),
   models: ModelMappingSchema.optional(),
   notes: z.string().optional(),
+  // `null` removes the block (back to a plain bearer key); undefined leaves it.
+  auth: ProviderAuthSchema.nullable().optional(),
 })
 
 export const TestProviderSchema = z.object({
@@ -61,6 +84,7 @@ export const TestProviderSchema = z.object({
   apiKey: z.string().min(1),
   modelId: z.string().min(1),
   apiFormat: ApiFormatSchema.default('anthropic'),
+  auth: ProviderAuthSchema.optional(),
 })
 
 // TypeScript types

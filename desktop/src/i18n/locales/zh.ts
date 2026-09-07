@@ -138,6 +138,18 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.apiFormatOpenaiChat': 'OpenAI Chat Completions (代理转换)',
   'settings.providers.apiFormatOpenaiResponses': 'OpenAI Responses API (代理转换)',
   'settings.providers.proxyHint': '请求将通过本地代理转换协议格式',
+  'settings.providers.authType': '认证方式',
+  'settings.providers.authBearer': 'API 密钥（Bearer）',
+  'settings.providers.authOauth2': 'OAuth2 客户端凭据 + X-API-KEY（企业网关）',
+  'settings.providers.authOauth2Hint': '本地代理使用客户端 ID 与密钥向 Token URL 获取令牌，在过期前自动刷新，并把下方的 API 密钥作为 X-API-KEY 请求头发送。',
+  'settings.providers.tokenUrl': 'Token URL（AUTH_URL）',
+  'settings.providers.tokenUrlPlaceholder': 'http://gateway.example.com/oauth2/token',
+  'settings.providers.clientId': 'Client ID',
+  'settings.providers.clientSecret': 'Client Secret',
+  'settings.providers.clientSecretKeep': 'Client Secret（留空保持不变）',
+  'settings.providers.xApiKey': 'X-API-KEY',
+  'settings.providers.xApiKeyKeep': 'X-API-KEY（留空保持不变）',
+  'settings.providers.authOauth2Badge': 'OAuth2',
 
   // Settings > Permissions
   'settings.permissions.title': '权限模式',

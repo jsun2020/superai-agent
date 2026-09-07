@@ -23,10 +23,23 @@ import {
   CreateProviderSchema,
   UpdateProviderSchema,
   TestProviderSchema,
+  ProviderAuthSchema,
+  ApiFormatSchema,
 } from '../types/provider.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 
 const providerService = new ProviderService()
+
+/** Overrides for testing a SAVED provider with edited-but-unsaved fields. */
+const TestOverridesSchema = z.object({
+  baseUrl: z.string().optional(),
+  modelId: z.string().optional(),
+  apiFormat: ApiFormatSchema.optional(),
+  // Partial: the form may send new token URL / client ID while keeping the
+  // stored secret (blank), exactly like apiKey on edit. `null` tests as bearer.
+  auth: ProviderAuthSchema.partial().extend({ type: z.literal('oauth2_client_credentials') }).nullable().optional(),
+})
+type TestOverrides = z.infer<typeof TestOverridesSchema>
 
 function maskApiKey(key: string): string {
   if (key.length <= 8) return '****'
@@ -34,10 +47,17 @@ function maskApiKey(key: string): string {
 }
 
 function sanitizeProvider(provider: Record<string, unknown>): Record<string, unknown> {
-  if (typeof provider.apiKey === 'string') {
-    return { ...provider, apiKey: maskApiKey(provider.apiKey) }
+  const out = { ...provider }
+  if (typeof out.apiKey === 'string') {
+    out.apiKey = maskApiKey(out.apiKey)
   }
-  return provider
+  // The OAuth client secret is a credential of the same rank as the API key
+  // and must never reach the webview in the clear.
+  const auth = out.auth as Record<string, unknown> | null | undefined
+  if (auth && typeof auth === 'object' && typeof auth.clientSecret === 'string') {
+    out.auth = { ...auth, clientSecret: maskApiKey(auth.clientSecret) }
+  }
+  return out
 }
 
 export async function handleProvidersApi(
@@ -112,11 +132,14 @@ export async function handleProvidersApi(
     // /api/providers/:id/test
     if (action === 'test') {
       if (req.method !== 'POST') throw methodNotAllowed(req.method)
-      let overrides: { baseUrl?: string; modelId?: string; apiFormat?: string } | undefined
+      let overrides: TestOverrides | undefined
       try {
         const body = await req.json()
-        if (body && typeof body === 'object') overrides = body as typeof overrides
-      } catch { /* no body is fine — uses saved values */ }
+        if (body && typeof body === 'object') overrides = TestOverridesSchema.parse(body)
+      } catch (err) {
+        if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
+        /* no body is fine — uses saved values */
+      }
       const result = await providerService.testProvider(id, overrides)
       return Response.json({ result })
     }

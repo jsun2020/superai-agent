@@ -10,7 +10,7 @@
  */
 
 import { ProviderService } from '../services/providerService.js'
-import { getTLSFetchOptions } from '../../utils/mtls.js'
+import { fetchUpstream, resolveUpstreamUrl, type UpstreamCredentials } from './upstreamAuth.js'
 import { anthropicToOpenaiChat } from './transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from './transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from './transform/openaiChatToAnthropic.js'
@@ -82,12 +82,13 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
 
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
+  const creds: UpstreamCredentials = { apiKey: config.apiKey, auth: config.auth }
 
   try {
     if (config.apiFormat === 'openai_chat') {
-      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream)
+      return await handleOpenaiChat(body, baseUrl, creds, isStream)
     } else {
-      return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream)
+      return await handleOpenaiResponses(body, baseUrl, creds, isStream)
     }
   } catch (err) {
     console.error('[Proxy] Upstream request failed:', err)
@@ -107,23 +108,14 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
 async function handleOpenaiChat(
   body: AnthropicRequest,
   baseUrl: string,
-  apiKey: string,
+  creds: UpstreamCredentials,
   isStream: boolean,
 ): Promise<Response> {
   const transformed = anthropicToOpenaiChat(body)
-  const url = `${baseUrl}/v1/chat/completions`
+  const url = resolveUpstreamUrl(baseUrl, '/v1/chat/completions')
 
-  const upstream = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(transformed),
-    signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
-    // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
-    // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
-    ...getTLSFetchOptions(),
+  const upstream = await fetchUpstream(url, transformed, creds, {
+    timeoutMs: isStream ? 30_000 : 300_000,
   })
 
   if (!upstream.ok) {
@@ -167,23 +159,14 @@ async function handleOpenaiChat(
 async function handleOpenaiResponses(
   body: AnthropicRequest,
   baseUrl: string,
-  apiKey: string,
+  creds: UpstreamCredentials,
   isStream: boolean,
 ): Promise<Response> {
   const transformed = anthropicToOpenaiResponses(body)
-  const url = `${baseUrl}/v1/responses`
+  const url = resolveUpstreamUrl(baseUrl, '/v1/responses')
 
-  const upstream = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(transformed),
-    signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
-    // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
-    // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
-    ...getTLSFetchOptions(),
+  const upstream = await fetchUpstream(url, transformed, creds, {
+    timeoutMs: isStream ? 30_000 : 300_000,
   })
 
   if (!upstream.ok) {

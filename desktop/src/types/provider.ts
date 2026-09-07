@@ -9,6 +9,19 @@ export type ModelMapping = {
   opus: string
 }
 
+/**
+ * OAuth2 client-credentials auth for enterprise gateways. The proxy fetches a
+ * bearer token from `tokenUrl` and sends the provider's apiKey as X-API-KEY.
+ * Only valid with a proxied (openai_*) apiFormat.
+ */
+export type ProviderAuth = {
+  type: 'oauth2_client_credentials'
+  tokenUrl: string
+  clientId: string
+  clientSecret: string  // masked from server; blank on update keeps current
+  scope?: string
+}
+
 export type SavedProvider = {
   id: string
   presetId: string
@@ -18,6 +31,7 @@ export type SavedProvider = {
   apiFormat: ApiFormat
   models: ModelMapping
   notes?: string
+  auth?: ProviderAuth
 }
 
 export type CreateProviderInput = {
@@ -28,6 +42,7 @@ export type CreateProviderInput = {
   apiFormat?: ApiFormat
   models: ModelMapping
   notes?: string
+  auth?: ProviderAuth
 }
 
 export type UpdateProviderInput = {
@@ -37,6 +52,8 @@ export type UpdateProviderInput = {
   apiFormat?: ApiFormat
   models?: ModelMapping
   notes?: string
+  /** `null` removes OAuth (back to a plain bearer key); undefined leaves it. */
+  auth?: ProviderAuth | null
 }
 
 export type TestProviderConfigInput = {
@@ -44,6 +61,16 @@ export type TestProviderConfigInput = {
   apiKey: string
   modelId: string
   apiFormat?: ApiFormat
+  auth?: ProviderAuth
+}
+
+/** Overrides for testing a SAVED provider with edited-but-unsaved fields. */
+export type TestProviderOverrides = {
+  baseUrl?: string
+  modelId?: string
+  apiFormat?: ApiFormat
+  /** Partial: a blank clientSecret tests with the stored one. `null` tests as bearer. */
+  auth?: (Partial<ProviderAuth> & { type: 'oauth2_client_credentials' }) | null
 }
 
 export type ProviderTestStepResult = {

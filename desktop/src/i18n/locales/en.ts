@@ -135,6 +135,18 @@ export const en = {
   'settings.providers.apiFormatAnthropic': 'Anthropic Messages (native)',
   'settings.providers.apiFormatOpenaiChat': 'OpenAI Chat Completions (proxy)',
   'settings.providers.apiFormatOpenaiResponses': 'OpenAI Responses API (proxy)',
+  'settings.providers.authType': 'Authentication',
+  'settings.providers.authBearer': 'API key (Bearer token)',
+  'settings.providers.authOauth2': 'OAuth2 client credentials + X-API-KEY (enterprise gateway)',
+  'settings.providers.authOauth2Hint': 'The local proxy requests a token from the token URL with the client ID and secret, refreshes it before it expires, and sends the API key below as the X-API-KEY header.',
+  'settings.providers.tokenUrl': 'Token URL (AUTH_URL)',
+  'settings.providers.tokenUrlPlaceholder': 'http://gateway.example.com/oauth2/token',
+  'settings.providers.clientId': 'Client ID',
+  'settings.providers.clientSecret': 'Client Secret',
+  'settings.providers.clientSecretKeep': 'Client Secret (leave blank to keep current)',
+  'settings.providers.xApiKey': 'X-API-KEY',
+  'settings.providers.xApiKeyKeep': 'X-API-KEY (leave blank to keep current)',
+  'settings.providers.authOauth2Badge': 'OAuth2',
   'settings.providers.proxyHint': 'Requests will be translated via the local proxy',
 
   // Settings > Permissions

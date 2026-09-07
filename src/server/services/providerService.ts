@@ -15,6 +15,7 @@ import { anthropicToOpenaiChat } from '../proxy/transform/anthropicToOpenaiChat.
 import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from '../proxy/transform/openaiChatToAnthropic.js'
 import { openaiResponsesToAnthropic } from '../proxy/transform/openaiResponsesToAnthropic.js'
+import { fetchUpstream, resolveUpstreamUrl, type UpstreamCredentials } from '../proxy/upstreamAuth.js'
 import type { AnthropicRequest, AnthropicResponse } from '../proxy/transform/types.js'
 import type {
   SavedProvider,
@@ -25,7 +26,43 @@ import type {
   ProviderTestResult,
   ProviderTestStepResult,
   ApiFormat,
+  ProviderAuth,
 } from '../types/provider.js'
+
+/** Overrides accepted when testing a saved provider with edited-but-unsaved fields. */
+export type TestProviderOverrides = {
+  baseUrl?: string
+  modelId?: string
+  apiFormat?: ApiFormat
+  auth?: (Partial<ProviderAuth> & { type: 'oauth2_client_credentials' }) | null
+}
+
+/**
+ * OAuth is injected by the local proxy, so it needs a format the proxy
+ * handles. A native Anthropic provider is called by the CLI directly with
+ * ANTHROPIC_API_KEY, which cannot carry a rotating token.
+ */
+function assertAuthCompatible(apiFormat: ApiFormat, auth: ProviderAuth | null | undefined): void {
+  if (auth && apiFormat === 'anthropic') {
+    throw ApiError.badRequest(
+      'OAuth2 client credentials require an OpenAI-compatible API format (the local proxy injects the token). Native Anthropic providers are called directly by the CLI.',
+    )
+  }
+}
+
+/** Merge an update's auth block over the stored one; a blank secret keeps the stored secret. */
+function mergeAuth(
+  existing: ProviderAuth | undefined,
+  input: ProviderAuth | null | undefined,
+): ProviderAuth | undefined {
+  if (input === undefined) return existing
+  if (input === null) return undefined
+  const clientSecret = input.clientSecret || existing?.clientSecret || ''
+  if (!clientSecret) {
+    throw ApiError.badRequest('OAuth2 client credentials require a client secret')
+  }
+  return { ...input, clientSecret }
+}
 
 const MANAGED_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
@@ -149,15 +186,20 @@ export class ProviderService {
   async addProvider(input: CreateProviderInput): Promise<SavedProvider> {
     const index = await this.readIndex()
 
+    const apiFormat = input.apiFormat ?? 'anthropic'
+    assertAuthCompatible(apiFormat, input.auth)
+    const auth = mergeAuth(undefined, input.auth)
+
     const provider: SavedProvider = {
       id: crypto.randomUUID(),
       presetId: input.presetId,
       name: input.name,
       apiKey: input.apiKey,
       baseUrl: input.baseUrl,
-      apiFormat: input.apiFormat ?? 'anthropic',
+      apiFormat,
       models: input.models,
       ...(input.notes !== undefined && { notes: input.notes }),
+      ...(auth && { auth }),
     }
 
     index.providers.push(provider)
@@ -170,7 +212,11 @@ export class ProviderService {
     const idx = index.providers.findIndex((p) => p.id === id)
     if (idx === -1) throw ApiError.notFound(`Provider not found: ${id}`)
 
-    const existing = index.providers[idx]
+    const existing = index.providers[idx]!
+    const apiFormat = input.apiFormat ?? existing.apiFormat ?? 'anthropic'
+    const auth = mergeAuth(existing.auth, input.auth)
+    assertAuthCompatible(apiFormat, auth)
+
     const updated: SavedProvider = {
       ...existing,
       ...(input.name !== undefined && { name: input.name }),
@@ -180,6 +226,8 @@ export class ProviderService {
       ...(input.models !== undefined && { models: input.models }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
+    if (auth) updated.auth = auth
+    else delete updated.auth
 
     index.providers[idx] = updated
     await this.writeIndex(index)
@@ -412,7 +460,7 @@ export class ProviderService {
     const index = await this.readIndex()
     if (index.activeId) {
       const provider = index.providers.find(p => p.id === index.activeId)
-      if (provider?.apiKey) {
+      if (provider?.apiKey || provider?.auth?.clientSecret) {
         return { hasAuth: true, source: 'superai-provider', activeProvider: provider.name }
       }
     }
@@ -444,6 +492,7 @@ export class ProviderService {
     baseUrl: string
     apiKey: string
     apiFormat: ApiFormat
+    auth?: ProviderAuth
   } | null> {
     if (providerId) {
       const provider = await this.getProvider(providerId)
@@ -451,6 +500,7 @@ export class ProviderService {
         baseUrl: provider.baseUrl,
         apiKey: provider.apiKey,
         apiFormat: provider.apiFormat ?? 'anthropic',
+        ...(provider.auth && { auth: provider.auth }),
       }
     }
 
@@ -462,6 +512,7 @@ export class ProviderService {
       baseUrl: provider.baseUrl,
       apiKey: provider.apiKey,
       apiFormat: provider.apiFormat ?? 'anthropic',
+      ...(provider.auth && { auth: provider.auth }),
     }
   }
 
@@ -469,6 +520,7 @@ export class ProviderService {
     baseUrl: string
     apiKey: string
     apiFormat: ApiFormat
+    auth?: ProviderAuth
   } | null> {
     return this.getProviderForProxy()
   }
@@ -477,14 +529,31 @@ export class ProviderService {
 
   async testProvider(
     id: string,
-    overrides?: { baseUrl?: string; modelId?: string; apiFormat?: ApiFormat },
+    overrides?: TestProviderOverrides,
   ): Promise<ProviderTestResult> {
     const provider = await this.getProvider(id)
     const baseUrl = overrides?.baseUrl || provider.baseUrl
     const modelId = overrides?.modelId || provider.models.main
     const apiFormat = overrides?.apiFormat ?? provider.apiFormat ?? 'anthropic'
 
-    if (!baseUrl || !provider.apiKey) {
+    // Edited-but-unsaved OAuth fields override the stored ones; a blank secret
+    // (the form never echoes it back) means "test with the stored secret".
+    let auth: ProviderAuth | undefined
+    if (overrides?.auth === null) {
+      auth = undefined
+    } else if (overrides?.auth) {
+      auth = mergeAuth(provider.auth, {
+        type: 'oauth2_client_credentials',
+        tokenUrl: overrides.auth.tokenUrl || provider.auth?.tokenUrl || '',
+        clientId: overrides.auth.clientId || provider.auth?.clientId || '',
+        clientSecret: overrides.auth.clientSecret || '',
+        ...(overrides.auth.scope !== undefined && { scope: overrides.auth.scope }),
+      })
+    } else {
+      auth = provider.auth
+    }
+
+    if (!baseUrl || (!provider.apiKey && !auth)) {
       return { connectivity: { success: false, latencyMs: 0, error: 'Missing baseUrl or apiKey' } }
     }
     return this.testProviderConfig({
@@ -492,16 +561,19 @@ export class ProviderService {
       apiKey: provider.apiKey,
       modelId,
       apiFormat,
+      ...(auth && { auth }),
     })
   }
 
   async testProviderConfig(input: TestProviderInput): Promise<ProviderTestResult> {
     const format: ApiFormat = input.apiFormat ?? 'anthropic'
     const base = input.baseUrl.replace(/\/+$/, '')
+    assertAuthCompatible(format, input.auth)
+    const creds: UpstreamCredentials = { apiKey: input.apiKey, auth: input.auth }
 
     // ── Step 1: Basic connectivity ───────────────────────────
     // Directly call the upstream API to verify URL, key, and model.
-    const step1 = await this.testConnectivity(base, input.apiKey, input.modelId, format)
+    const step1 = await this.testConnectivity(base, creds, input.modelId, format)
 
     // If connectivity failed, no point running step 2
     if (!step1.success) {
@@ -515,7 +587,7 @@ export class ProviderService {
 
     // ── Step 2: Full proxy pipeline ──────────────────────────
     // Anthropic request → transform → upstream → transform back → validate
-    const step2 = await this.testProxyPipeline(base, input.apiKey, input.modelId, format)
+    const step2 = await this.testProxyPipeline(base, creds, input.modelId, format)
 
     return { connectivity: step1, proxy: step2 }
   }
@@ -523,22 +595,31 @@ export class ProviderService {
   /** Step 1: Direct upstream call to verify connectivity, auth, and model. */
   private async testConnectivity(
     base: string,
-    apiKey: string,
+    creds: UpstreamCredentials,
     modelId: string,
     format: ApiFormat,
   ): Promise<ProviderTestStepResult> {
     const start = Date.now()
     try {
-      const { url, headers, body } = buildDirectTestRequest(base, apiKey, modelId, format)
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30000),
-        // OS trust store / NODE_EXTRA_CA_CERTS - same TLS trust as the CLI, so
-        // "Test" fails or passes for the same reasons a session would.
-        ...getTLSFetchOptions(),
-      })
+      const { url, body } = buildDirectTestRequest(base, modelId, format)
+      // OpenAI-style formats go through the same auth path as the proxy, so
+      // "Test" fails or passes for the same reasons a session would - including
+      // the OAuth token dance. Native Anthropic keeps its x-api-key header.
+      const response =
+        format === 'anthropic'
+          ? await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': creds.apiKey,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(30000),
+              // OS trust store / NODE_EXTRA_CA_CERTS - same TLS trust as the CLI.
+              ...getTLSFetchOptions(),
+            })
+          : await fetchUpstream(url, body, creds, { timeoutMs: 30000 })
 
       const latencyMs = Date.now() - start
       const resBody = await response.json().catch(() => null) as Record<string, unknown> | null
@@ -570,7 +651,7 @@ export class ProviderService {
   /** Step 2: Full proxy pipeline — Anthropic → transform → upstream → transform back → validate. */
   private async testProxyPipeline(
     base: string,
-    apiKey: string,
+    creds: UpstreamCredentials,
     modelId: string,
     format: 'openai_chat' | 'openai_responses',
   ): Promise<ProviderTestStepResult> {
@@ -588,20 +669,14 @@ export class ProviderService {
       let transformedBody: unknown
       if (format === 'openai_chat') {
         transformedBody = anthropicToOpenaiChat(anthropicReq)
-        upstreamUrl = `${base}/v1/chat/completions`
+        upstreamUrl = resolveUpstreamUrl(base, '/v1/chat/completions')
       } else {
         transformedBody = anthropicToOpenaiResponses(anthropicReq)
-        upstreamUrl = `${base}/v1/responses`
+        upstreamUrl = resolveUpstreamUrl(base, '/v1/responses')
       }
 
-      // Call upstream with transformed request
-      const response = await fetch(upstreamUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(transformedBody),
-        signal: AbortSignal.timeout(30000),
-        ...getTLSFetchOptions(),
-      })
+      // Call upstream with transformed request, through the proxy's own auth path
+      const response = await fetchUpstream(upstreamUrl, transformedBody, creds, { timeoutMs: 30000 })
 
       if (!response.ok) {
         const latencyMs = Date.now() - start
@@ -639,30 +714,26 @@ export class ProviderService {
 
 function buildDirectTestRequest(
   base: string,
-  apiKey: string,
   modelId: string,
   format: ApiFormat,
-): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
+): { url: string; body: Record<string, unknown> } {
   const prompt = 'Say "ok" and nothing else.'
 
   if (format === 'openai_chat') {
     return {
-      url: `${base}/v1/chat/completions`,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      url: resolveUpstreamUrl(base, '/v1/chat/completions'),
       body: { model: modelId, max_tokens: 16, messages: [{ role: 'user', content: prompt }] },
     }
   }
   if (format === 'openai_responses') {
     return {
-      url: `${base}/v1/responses`,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      url: resolveUpstreamUrl(base, '/v1/responses'),
       body: { model: modelId, max_output_tokens: 16, input: [{ type: 'message', role: 'user', content: prompt }] },
     }
   }
   // anthropic
   return {
     url: `${base}/v1/messages`,
-    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: { model: modelId, max_tokens: 16, messages: [{ role: 'user', content: prompt }] },
   }
 }

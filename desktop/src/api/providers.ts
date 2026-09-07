@@ -6,6 +6,7 @@ import type {
   CreateProviderInput,
   UpdateProviderInput,
   TestProviderConfigInput,
+  TestProviderOverrides,
   ProviderTestResult,
 } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -65,7 +66,7 @@ export const providersApi = {
     return api.post<{ ok: true }>('/api/providers/openai-codex-official')
   },
 
-  test(id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) {
+  test(id: string, overrides?: TestProviderOverrides) {
     return api.post<TestResultResponse>(`/api/providers/${id}/test`, overrides)
   },
 

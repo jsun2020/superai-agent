@@ -9,7 +9,7 @@ import { Button } from '../components/shared/Button'
 import type { PermissionMode, EffortLevel, ThemeMode, ProxyConfig, ProxyTestResult } from '../types/settings'
 import { settingsApi } from '../api/settings'
 import type { Locale } from '../i18n'
-import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat } from '../types/provider'
+import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat, ProviderAuth } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
 import { AdapterSettings } from './AdapterSettings'
 import { useAgentStore } from '../stores/agentStore'
@@ -287,6 +287,11 @@ function ProviderSettings() {
                         {provider.apiFormat === 'openai_chat' ? 'OpenAI Chat' : 'OpenAI Responses'}
                       </span>
                     )}
+                    {provider.auth && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-[var(--color-surface-container-high)] text-[var(--color-text-tertiary)] leading-none">
+                        {t('settings.providers.authOauth2Badge')}
+                      </span>
+                    )}
                     {isActive && (
                       <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
                     )}
@@ -404,6 +409,12 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? initialPreset.baseUrl)
   const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
   const [apiKey, setApiKey] = useState('')
+  // OAuth2 client credentials (enterprise gateways). The secret is never
+  // echoed back by the server, so on edit it starts blank = "keep current".
+  const [authType, setAuthType] = useState<'bearer' | 'oauth2'>(provider?.auth ? 'oauth2' : 'bearer')
+  const [tokenUrl, setTokenUrl] = useState(provider?.auth?.tokenUrl ?? '')
+  const [clientId, setClientId] = useState(provider?.auth?.clientId ?? '')
+  const [clientSecret, setClientSecret] = useState('')
   const [notes, setNotes] = useState(provider?.notes ?? '')
   const [models, setModels] = useState<ModelMapping>(provider?.models ?? { ...initialPreset.defaultModels })
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -450,11 +461,22 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setBaseUrl(preset.baseUrl)
     setApiFormat(preset.apiFormat ?? 'anthropic')
     setModels({ ...preset.defaultModels })
+    setAuthType('bearer')
     setTestResult(null)
   }
 
   const isCustom = selectedPreset.id === 'custom'
-  const canSubmit = name.trim() && baseUrl.trim() && (mode === 'edit' || apiKey.trim()) && models.main.trim() && !settingsJsonError
+  // OAuth is injected by the local proxy, so it only exists for proxied formats.
+  const isOauth = apiFormat !== 'anthropic' && authType === 'oauth2'
+  const oauthReady = !isOauth || (tokenUrl.trim() && clientId.trim() && (mode === 'edit' || clientSecret.trim()))
+  const canSubmit = name.trim() && baseUrl.trim() && (mode === 'edit' || apiKey.trim()) && models.main.trim() && oauthReady && !settingsJsonError
+
+  const buildAuth = (): ProviderAuth => ({
+    type: 'oauth2_client_credentials',
+    tokenUrl: tokenUrl.trim(),
+    clientId: clientId.trim(),
+    clientSecret: clientSecret.trim(),
+  })
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -481,6 +503,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           apiFormat,
           models,
           notes: notes.trim() || undefined,
+          ...(isOauth && { auth: buildAuth() }),
         })
       } else if (provider) {
         const input: UpdateProviderInput = {
@@ -491,6 +514,10 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           notes: notes.trim() || undefined,
         }
         if (apiKey.trim()) input.apiKey = apiKey.trim()
+        // Switching an OAuth provider back to a plain key must remove the block,
+        // not silently leave the old credentials in place.
+        if (isOauth) input.auth = buildAuth()
+        else if (provider.auth) input.auth = null
         await updateProvider(provider.id, input)
       }
       await fetchSettings()
@@ -508,15 +535,29 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setTestResult(null)
     try {
       let result: ProviderTestResult
-      if (mode === 'edit' && provider && !apiKey.trim()) {
+      // Saved-provider test when a stored secret is needed: the server never
+      // echoes the API key or client secret, so an unsaved-config test cannot
+      // carry them.
+      const useSaved = mode === 'edit' && provider && (!apiKey.trim() || (isOauth && !clientSecret.trim()))
+      if (useSaved) {
         result = await useProviderStore.getState().testProvider(provider.id, {
           baseUrl: baseUrl.trim(),
           modelId: models.main.trim(),
           apiFormat,
+          auth: isOauth
+            ? { ...buildAuth(), ...(clientSecret.trim() ? {} : { clientSecret: undefined }) }
+            : provider.auth ? null : undefined,
         })
       } else {
         if (!apiKey.trim()) return
-        result = await testConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), modelId: models.main.trim(), apiFormat })
+        if (isOauth && !oauthReady) return
+        result = await testConfig({
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim(),
+          modelId: models.main.trim(),
+          apiFormat,
+          ...(isOauth && { auth: buildAuth() }),
+        })
       }
       setTestResult(result)
     } catch {
@@ -586,7 +627,12 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
             <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
             <select
               value={apiFormat}
-              onChange={(e) => setApiFormat(e.target.value as ApiFormat)}
+              onChange={(e) => {
+                const next = e.target.value as ApiFormat
+                setApiFormat(next)
+                // Native Anthropic is called by the CLI directly - no proxy, no OAuth.
+                if (next === 'anthropic') setAuthType('bearer')
+              }}
               className="w-full text-sm px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
             >
               <option value="anthropic">{t('settings.providers.apiFormatAnthropic')}</option>
@@ -606,13 +652,50 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           </div>
         ) : null}
 
+        {/* Authentication — only where the local proxy is in the path to inject it */}
+        {apiFormat !== 'anthropic' && (isCustom || mode === 'edit') && (
+          <div>
+            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.authType')}</label>
+            <select
+              value={authType}
+              onChange={(e) => setAuthType(e.target.value as 'bearer' | 'oauth2')}
+              aria-label={t('settings.providers.authType')}
+              className="w-full text-sm px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
+            >
+              <option value="bearer">{t('settings.providers.authBearer')}</option>
+              <option value="oauth2">{t('settings.providers.authOauth2')}</option>
+            </select>
+            {authType === 'oauth2' && (
+              <>
+                <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.authOauth2Hint')}</p>
+                <div className="grid grid-cols-1 gap-2 mt-2">
+                  <Input label={t('settings.providers.tokenUrl')} required value={tokenUrl} onChange={(e) => setTokenUrl(e.target.value)} placeholder={t('settings.providers.tokenUrlPlaceholder')} />
+                  <Input label={t('settings.providers.clientId')} required value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                  <Input
+                    label={mode === 'edit' ? t('settings.providers.clientSecretKeep') : t('settings.providers.clientSecret')}
+                    required={mode === 'create'}
+                    type="password"
+                    value={clientSecret}
+                    onChange={(e) => setClientSecret(e.target.value)}
+                    placeholder={mode === 'edit' ? '****' : ''}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <Input
-          label={mode === 'edit' ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
+          label={
+            isOauth
+              ? (mode === 'edit' ? t('settings.providers.xApiKeyKeep') : t('settings.providers.xApiKey'))
+              : (mode === 'edit' ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey'))
+          }
           required={mode === 'create'}
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={mode === 'edit' ? '****' : 'sk-...'}
+          placeholder={mode === 'edit' ? '****' : isOauth ? '' : 'sk-...'}
         />
 
         {/* Model Mapping */}
