@@ -43,7 +43,12 @@ export function anthropicToOpenaiChat(body: AnthropicRequest): OpenAIChatRequest
     stream: body.stream,
   }
 
-  // max_tokens — omit to let upstream provider use its own default/max.
+  // max_tokens — forward the CLI's budget. Omitting it let the upstream apply
+  // its own (small) default cap, which cut tool calls mid-JSON; see
+  // ../maxTokensPolicy.ts for how a provider that rejects the value is handled.
+  if (typeof body.max_tokens === 'number' && body.max_tokens > 0) {
+    result.max_tokens = body.max_tokens
+  }
   // Claude Code sends very large values (e.g. 128K) that exceed many
   // providers' limits (DeepSeek: 8192, etc.).
 

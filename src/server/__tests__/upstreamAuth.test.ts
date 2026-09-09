@@ -119,7 +119,7 @@ describe('resolveUpstreamUrl', () => {
 describe('fetchUpstream', () => {
   test('sends the body with the resolved headers', async () => {
     const { seen } = installFetch([], () => 200)
-    const res = await fetchUpstream(UPSTREAM, { model: 'm' }, { apiKey: 'sk-1' }, { timeoutMs: 1000 })
+    const res = await fetchUpstream(UPSTREAM, { model: 'm' }, { apiKey: 'sk-1' }, { headersTimeoutMs: 1000 })
     expect(res.status).toBe(200)
     expect(seen).toHaveLength(1)
     expect(seen[0]!.headers.Authorization).toBe('Bearer sk-1')
@@ -128,7 +128,7 @@ describe('fetchUpstream', () => {
 
   test('a 401 on a stale oauth token is retried once with a fresh one', async () => {
     const { seen, tokenCalls } = installFetch(['tok-old', 'tok-new'], (b) => (b === 'tok-new' ? 200 : 401))
-    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { timeoutMs: 1000 })
+    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { headersTimeoutMs: 1000 })
     expect(res.status).toBe(200)
     expect(tokenCalls()).toBe(2)
     const upstreamCalls = seen.filter((s) => s.url === UPSTREAM)
@@ -137,7 +137,7 @@ describe('fetchUpstream', () => {
 
   test('a second 401 is returned as-is — no loop on the token endpoint', async () => {
     const { seen, tokenCalls } = installFetch(['tok-1', 'tok-2', 'tok-3'], () => 401)
-    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { timeoutMs: 1000 })
+    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { headersTimeoutMs: 1000 })
     expect(res.status).toBe(401)
     expect(tokenCalls()).toBe(2)
     expect(seen.filter((s) => s.url === UPSTREAM)).toHaveLength(2)
@@ -145,15 +145,58 @@ describe('fetchUpstream', () => {
 
   test('a 401 on a plain API key is not retried — a wrong key does not fix itself', async () => {
     const { seen } = installFetch([], () => 401)
-    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'sk-bad' }, { timeoutMs: 1000 })
+    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'sk-bad' }, { headersTimeoutMs: 1000 })
     expect(res.status).toBe(401)
     expect(seen).toHaveLength(1)
   })
 
   test('a successful oauth call reuses the cached token on the next request', async () => {
     const { tokenCalls } = installFetch(['tok-1'], () => 200)
-    await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { timeoutMs: 1000 })
-    await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { timeoutMs: 1000 })
+    await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { headersTimeoutMs: 1000 })
+    await fetchUpstream(UPSTREAM, {}, { apiKey: 'xk', auth: OAUTH }, { headersTimeoutMs: 1000 })
     expect(tokenCalls()).toBe(1)
+  })
+})
+
+describe('fetchUpstream timeouts', () => {
+  /** A fetch stub that resolves headers after `headersMs` and honours abort. */
+  function slowFetch(headersMs: number, bodyChunksMs: number[]) {
+    return (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, headersMs)
+        signal.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason) }, { once: true })
+      })
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          for (const ms of bodyChunksMs) {
+            await new Promise((r) => setTimeout(r, ms))
+            if (signal.aborted) { controller.error(signal.reason); return }
+            controller.enqueue(new TextEncoder().encode('x'))
+          }
+          controller.close()
+        },
+      })
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch
+  }
+
+  test('a streaming body may outlive the headers timeout - it is the model talking', async () => {
+    // Headers in 10ms, body takes ~150ms, headers timeout 50ms: must complete.
+    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'k' }, { headersTimeoutMs: 50 }, slowFetch(10, [50, 50, 50]))
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('xxx')
+  })
+
+  test('no headers within the timeout aborts with a TimeoutError', async () => {
+    const err = await fetchUpstream(UPSTREAM, {}, { apiKey: 'k' }, { headersTimeoutMs: 30 }, slowFetch(200, [])).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(DOMException)
+    expect((err as DOMException).name).toBe('TimeoutError')
+  })
+
+  test('a total timeout still bounds a non-streaming body', async () => {
+    const res = await fetchUpstream(UPSTREAM, {}, { apiKey: 'k' }, { headersTimeoutMs: 50, totalTimeoutMs: 40 }, slowFetch(10, [100]))
+    const err = await res.text().catch((e: Error) => e)
+    expect(err).toBeInstanceOf(DOMException)
   })
 })

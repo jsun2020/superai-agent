@@ -53,6 +53,11 @@ export function openaiChatToAnthropic(response: OpenAIChatResponse, model: strin
       try {
         input = JSON.parse(tc.function.arguments)
       } catch {
+        // Cut at the provider's output cap mid-arguments: drop the call. Handing
+        // the CLI a runnable call with garbage input makes the tool reject it
+        // and the model regenerate the same answer forever (this is the
+        // non-streaming fallback path, so it must match the stream transform).
+        if (choice.finish_reason === 'length') continue
         input = { raw: tc.function.arguments }
       }
       content.push({

@@ -20,7 +20,10 @@ describe('anthropicToOpenaiChat', () => {
     }
     const result = anthropicToOpenaiChat(req)
     expect(result.model).toBe('gpt-4')
-    expect(result.max_tokens).toBeUndefined()
+    // The CLI's output budget must reach the upstream. Omitting it let the
+    // provider's own default cap cut tool calls mid-JSON (the "same sentence
+    // repeated forever" bug).
+    expect(result.max_tokens).toBe(1024)
     expect(result.messages).toEqual([{ role: 'user', content: 'Hello' }])
   })
 
@@ -303,7 +306,7 @@ describe('anthropicToOpenaiResponses', () => {
     const result = anthropicToOpenaiResponses(req)
     expect(result.model).toBe('gpt-4o')
     expect(result.instructions).toBe('Be helpful')
-    expect(result.max_output_tokens).toBeUndefined()
+    expect(result.max_output_tokens).toBe(1024)
     expect(result.input).toEqual([{ type: 'message', role: 'user', content: 'Hello' }])
   })
 
@@ -465,5 +468,32 @@ describe('openaiResponsesToAnthropic', () => {
     }
     const result = openaiResponsesToAnthropic(res, 'gpt-4o')
     expect(result.content).toEqual([{ type: 'text', text: '' }])
+  })
+})
+
+// ─── Non-streaming: truncated tool calls (the fallback path must match the stream) ──
+
+describe('openaiChatToAnthropic: tool calls cut by the output cap', () => {
+  const withTool = (args: string, finish: string): OpenAIChatResponse => ({
+    id: 'r1', object: 'chat.completion', created: 0, model: 'm',
+    choices: [{ index: 0, message: { role: 'assistant', content: 'Let me write the plan.', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'Write', arguments: args } }] }, finish_reason: finish }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }) as unknown as OpenAIChatResponse
+
+  test('half-JSON arguments at finish_reason length: the call is dropped, text kept, max_tokens', () => {
+    const r = openaiChatToAnthropic(withTool('{"file_path": "PLAN.md", "content": "# Plan', 'length'), 'm')
+    expect(r.content.map((c) => c.type)).toEqual(['text'])
+    expect(r.stop_reason).toBe('max_tokens')
+  })
+
+  test('malformed arguments at a normal finish are passed through as raw', () => {
+    const r = openaiChatToAnthropic(withTool('{oops', 'tool_calls'), 'm')
+    const tool = r.content.find((c) => c.type === 'tool_use') as { input: Record<string, unknown> }
+    expect(tool.input).toEqual({ raw: '{oops' })
+  })
+
+  test('a complete call at finish_reason length is kept', () => {
+    const r = openaiChatToAnthropic(withTool('{"file_path": "PLAN.md"}', 'length'), 'm')
+    expect(r.content.map((c) => c.type)).toEqual(['text', 'tool_use'])
   })
 })

@@ -315,3 +315,64 @@ describe('openaiResponsesStreamToAnthropic', () => {
     expect((msgDelta.data.delta as Record<string, unknown>).stop_reason).toBe('tool_use')
   })
 })
+
+// ─── Truncated tool calls (the "same sentence repeated forever" bug) ──────
+
+describe('openaiChatStreamToAnthropic: tool calls cut by the upstream output cap', () => {
+  const head = 'data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}\n\n'
+  const text = 'data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"Let me write the plan."},"finish_reason":null}]}\n\n'
+  const toolStart = 'data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Write","arguments":""}}]},"finish_reason":null}]}\n\n'
+  const halfArgs = 'data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"file_path\\": \\"PLAN.md\\", \\"content\\": \\"# Plan"}}]},"finish_reason":null}]}\n\n'
+  const fullArgs = 'data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"file_path\\": \\"PLAN.md\\"}"}}]},"finish_reason":null}]}\n\n'
+  const finish = (reason: string) => `data: {"id":"c9","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"${reason}"}],"usage":{"prompt_tokens":1,"completion_tokens":4096,"total_tokens":4097}}\n\n`
+  const done = 'data: [DONE]\n\n'
+
+  const toolBlocks = (events: Array<{ event: string; data: Record<string, unknown> }>) =>
+    events.filter((e) => e.event === 'content_block_start' && (e.data.content_block as Record<string, unknown>)?.type === 'tool_use')
+  const stopReason = (events: Array<{ event: string; data: Record<string, unknown> }>) =>
+    (events.find((e) => e.event === 'message_delta')!.data.delta as Record<string, unknown>).stop_reason
+
+  test('a tool call cut mid-arguments by "length" is dropped; the text and max_tokens survive', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, text, toolStart, halfArgs, finish('length'), done]), 'm'))
+    expect(toolBlocks(events)).toHaveLength(0)
+    const textDelta = events.find((e) => e.event === 'content_block_delta' && (e.data.delta as Record<string, unknown>).type === 'text_delta')
+    expect((textDelta!.data.delta as Record<string, unknown>).text).toBe('Let me write the plan.')
+    expect(stopReason(events)).toBe('max_tokens')
+  })
+
+  test('a tool call with no arguments at all when cut is dropped too', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, text, toolStart, finish('length'), done]), 'm'))
+    expect(toolBlocks(events)).toHaveLength(0)
+    expect(stopReason(events)).toBe('max_tokens')
+  })
+
+  test('a complete tool call that happens to end with "length" is kept', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, toolStart, fullArgs, finish('length'), done]), 'm'))
+    expect(toolBlocks(events)).toHaveLength(1)
+    const delta = events.find((e) => e.event === 'content_block_delta' && (e.data.delta as Record<string, unknown>).type === 'input_json_delta')
+    expect(JSON.parse((delta!.data.delta as Record<string, unknown>).partial_json as string)).toEqual({ file_path: 'PLAN.md' })
+  })
+
+  test('a stream that ends without any finish_reason treats a half tool call as cut', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, text, toolStart, halfArgs]), 'm'))
+    expect(toolBlocks(events)).toHaveLength(0)
+    expect(events.some((e) => e.event === 'message_stop')).toBe(true)
+  })
+
+  test('malformed arguments on a normal finish are passed through - the provider\'s bug, the tool reports it', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, toolStart, halfArgs, finish('tool_calls'), done]), 'm'))
+    expect(toolBlocks(events)).toHaveLength(1)
+    expect(stopReason(events)).toBe('tool_use')
+  })
+
+  test('every block index gets exactly one content_block_stop in a text -> tool stream', async () => {
+    const events = await collectSse(openaiChatStreamToAnthropic(makeStream([head, text, toolStart, fullArgs, finish('tool_calls'), done]), 'm'))
+    const stops = events.filter((e) => e.event === 'content_block_stop').map((e) => e.data.index)
+    const starts = events.filter((e) => e.event === 'content_block_start').map((e) => e.data.index)
+    expect(starts).toEqual([0, 1])
+    expect(stops).toEqual([0, 1])
+    // and the text block closes before the tool block opens
+    const order = events.map((e) => `${e.event}:${e.data.index ?? ''}`)
+    expect(order.indexOf('content_block_stop:0')).toBeLessThan(order.indexOf('content_block_start:1'))
+  })
+})

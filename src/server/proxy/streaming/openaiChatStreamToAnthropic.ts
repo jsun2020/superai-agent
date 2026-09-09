@@ -220,23 +220,38 @@ function closeCurrentBlock(state: StreamState): void {
   })
 }
 
-function closeAllToolBlocks(state: StreamState): void {
+/**
+ * Emit every buffered tool call as a complete block. `cut` means the upstream
+ * stopped early (finish_reason "length", or the stream ended with no finish
+ * reason at all): a tool call whose arguments are not complete JSON is then
+ * dropped, so the CLI sees text + max_tokens and takes its bounded recovery
+ * path instead of executing garbage. On a normal finish, malformed arguments
+ * are passed through - that is the provider's bug and the tool will say so.
+ */
+function closeAllToolBlocks(state: StreamState, cut: boolean): void {
   for (const [, block] of state.toolBlocks) {
-    if (block.started) {
-      enqueue(state, 'content_block_stop', {
-        type: 'content_block_stop',
-        index: block.anthropicIndex,
-      })
+    if (!block.id || !block.name) continue
+    if (cut && parseToolInput(block.argsBuffer) === null) continue
+
+    const index = state.nextContentIndex++
+    enqueue(state, 'content_block_start', {
+      type: 'content_block_start',
+      index,
+      content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} },
+    })
+    if (block.argsBuffer) {
+      emitDelta(state, index, { type: 'input_json_delta', partial_json: block.argsBuffer })
     }
+    enqueue(state, 'content_block_stop', { type: 'content_block_stop', index })
   }
   state.toolBlocks.clear()
 }
 
-function closeAllOpenBlocks(state: StreamState): void {
+function closeAllOpenBlocks(state: StreamState, cut = false): void {
   // Close current text/thinking block
   closeCurrentBlock(state)
-  // Close all tool blocks
-  closeAllToolBlocks(state)
+  // Emit + close all tool blocks
+  closeAllToolBlocks(state, cut)
 }
 
 // ─── Block type detection (follows LiteLLM priority) ───────
@@ -423,31 +438,25 @@ function handleToolCalls(delta: DeltaEx, state: StreamState): void {
     if (tc.function?.name) block.name += tc.function.name
     if (tc.function?.arguments) block.argsBuffer += tc.function.arguments
 
-    // Start tool block once we have id + name
-    if (!block.started && block.id && block.name) {
-      block.started = true
-      block.anthropicIndex = state.nextContentIndex++
-      state.currentBlockType = 'tool_use'
-      state.blockStartSent = true
-      state.blockStopSent = false
+    // Buffered: nothing is emitted until the block closes (closeAllToolBlocks).
+    // A tool call cut by the upstream's output cap must never reach the CLI as
+    // a runnable call - it would execute the half-JSON input, the tool would
+    // reject it, and the model would regenerate the same answer forever.
+    // Tool cards are not rendered incrementally anyway, so nothing is lost.
+    state.currentBlockType = 'tool_use'
+    // No text/thinking block is open now; closeCurrentBlock must be a no-op.
+    state.blockStartSent = false
+    state.blockStopSent = true
+  }
+}
 
-      enqueue(state, 'content_block_start', {
-        type: 'content_block_start',
-        index: block.anthropicIndex,
-        content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} },
-      })
-
-      // Flush buffered arguments
-      if (block.argsBuffer) {
-        emitDelta(state, block.anthropicIndex, {
-          type: 'input_json_delta', partial_json: block.argsBuffer,
-        })
-      }
-    } else if (block.started && tc.function?.arguments) {
-      emitDelta(state, block.anthropicIndex, {
-        type: 'input_json_delta', partial_json: tc.function.arguments,
-      })
-    }
+function parseToolInput(args: string): Record<string, unknown> | null {
+  if (!args.trim()) return null
+  try {
+    const v = JSON.parse(args) as unknown
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
   }
 }
 
@@ -460,8 +469,9 @@ function handleFinishReason(
 ): void {
   if (state.messageDeltaSent) return
 
-  // CRITICAL: close ALL content blocks BEFORE message_delta
-  closeAllOpenBlocks(state)
+  // CRITICAL: close ALL content blocks BEFORE message_delta. "length" means
+  // the upstream cut the answer at its output cap - see closeAllToolBlocks.
+  closeAllOpenBlocks(state, finishReason === 'length')
 
   const stopReason = mapFinishReason(finishReason)
   const usage = chunk.usage
@@ -506,8 +516,10 @@ function finalizeStream(state: StreamState): void {
 
   ensureMessageStart(state)
 
-  // Close any remaining open blocks
-  closeAllOpenBlocks(state)
+  // Close any remaining open blocks. No finish_reason ever arrived means the
+  // stream was cut off, so a half-received tool call is treated as truncated.
+  const cut = !state.messageDeltaSent && !state.heldMessageDelta
+  closeAllOpenBlocks(state, cut)
 
   // Flush held message_delta if still waiting for usage
   if (state.heldMessageDelta && !state.messageDeltaSent) {

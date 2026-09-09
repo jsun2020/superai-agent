@@ -619,7 +619,7 @@ export class ProviderService {
               // OS trust store / NODE_EXTRA_CA_CERTS - same TLS trust as the CLI.
               ...getTLSFetchOptions(),
             })
-          : await fetchUpstream(url, body, creds, { timeoutMs: 30000 })
+          : await fetchUpstream(url, body, creds, { headersTimeoutMs: 30000, totalTimeoutMs: 30000 })
 
       const latencyMs = Date.now() - start
       const resBody = await response.json().catch(() => null) as Record<string, unknown> | null
@@ -676,7 +676,7 @@ export class ProviderService {
       }
 
       // Call upstream with transformed request, through the proxy's own auth path
-      const response = await fetchUpstream(upstreamUrl, transformedBody, creds, { timeoutMs: 30000 })
+      const response = await fetchUpstream(upstreamUrl, transformedBody, creds, { headersTimeoutMs: 30000, totalTimeoutMs: 30000 })
 
       if (!response.ok) {
         const latencyMs = Date.now() - start

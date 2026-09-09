@@ -10,7 +10,18 @@
  */
 
 import { ProviderService } from '../services/providerService.js'
-import { fetchUpstream, resolveUpstreamUrl, type UpstreamCredentials } from './upstreamAuth.js'
+import {
+  fetchUpstream,
+  resolveUpstreamUrl,
+  type UpstreamCredentials,
+  type UpstreamTimeouts,
+} from './upstreamAuth.js'
+import {
+  isMaxTokensRejection,
+  maxTokensAccepted,
+  rememberMaxTokensRejected,
+  stripMaxTokens,
+} from './maxTokensPolicy.js'
 import { anthropicToOpenaiChat } from './transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from './transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from './transform/openaiChatToAnthropic.js'
@@ -105,18 +116,61 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
   }
 }
 
+/**
+ * Streaming: bound only the wait for headers. The body is the model talking,
+ * which legitimately takes minutes; a whole-body cap here truncated streams at
+ * 30s, the CLI discarded the partial text and re-requested non-streaming, and
+ * users saw nothing for 30s and then a late answer.
+ * Non-streaming: headers arrive only when generation is done, so the total
+ * budget applies to both.
+ */
+function upstreamTimeouts(isStream: boolean): UpstreamTimeouts {
+  return isStream
+    ? { headersTimeoutMs: 60_000 }
+    : { headersTimeoutMs: 300_000, totalTimeoutMs: 300_000 }
+}
+
+/**
+ * Send the transformed request, forwarding the CLI's max_tokens unless this
+ * provider is known to reject it. A first-time rejection (400 naming the
+ * field) is retried once without it and remembered - see maxTokensPolicy.ts.
+ */
+async function sendUpstream(
+  url: string,
+  baseUrl: string,
+  transformed: Record<string, unknown>,
+  creds: UpstreamCredentials,
+  isStream: boolean,
+): Promise<Response> {
+  const timeouts = upstreamTimeouts(isStream)
+  if (!maxTokensAccepted(baseUrl)) {
+    return fetchUpstream(url, stripMaxTokens(transformed), creds, timeouts)
+  }
+  const first = await fetchUpstream(url, transformed, creds, timeouts)
+  if (first.status !== 400) return first
+
+  const text = await first.text().catch(() => '')
+  if (!isMaxTokensRejection(first.status, text)) {
+    // A different 400: hand it back intact for the normal error path.
+    return new Response(text, { status: first.status, headers: first.headers })
+  }
+  rememberMaxTokensRejected(baseUrl)
+  console.warn(
+    `[Proxy] ${baseUrl} rejected max_tokens (${text.slice(0, 120)}); retrying without it and omitting it for this provider from now on. Long answers may be cut at the provider's own default cap.`,
+  )
+  return fetchUpstream(url, stripMaxTokens(transformed), creds, timeouts)
+}
+
 async function handleOpenaiChat(
   body: AnthropicRequest,
   baseUrl: string,
   creds: UpstreamCredentials,
   isStream: boolean,
 ): Promise<Response> {
-  const transformed = anthropicToOpenaiChat(body)
+  const transformed = anthropicToOpenaiChat(body) as unknown as Record<string, unknown>
   const url = resolveUpstreamUrl(baseUrl, '/v1/chat/completions')
 
-  const upstream = await fetchUpstream(url, transformed, creds, {
-    timeoutMs: isStream ? 30_000 : 300_000,
-  })
+  const upstream = await sendUpstream(url, baseUrl, transformed, creds, isStream)
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')
@@ -162,12 +216,10 @@ async function handleOpenaiResponses(
   creds: UpstreamCredentials,
   isStream: boolean,
 ): Promise<Response> {
-  const transformed = anthropicToOpenaiResponses(body)
+  const transformed = anthropicToOpenaiResponses(body) as unknown as Record<string, unknown>
   const url = resolveUpstreamUrl(baseUrl, '/v1/responses')
 
-  const upstream = await fetchUpstream(url, transformed, creds, {
-    timeoutMs: isStream ? 30_000 : 300_000,
-  })
+  const upstream = await sendUpstream(url, baseUrl, transformed, creds, isStream)
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')

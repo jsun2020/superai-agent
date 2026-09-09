@@ -40,7 +40,11 @@ export function anthropicToOpenaiResponses(body: AnthropicRequest): OpenAIRespon
     }
   }
 
-  // max_tokens — omit to let upstream provider use its own default/max.
+  // max_tokens — forward the CLI's budget as the Responses API's field. See
+  // anthropicToOpenaiChat.ts and ../maxTokensPolicy.ts for why.
+  if (typeof body.max_tokens === 'number' && body.max_tokens > 0) {
+    result.max_output_tokens = body.max_tokens
+  }
   // Claude Code sends very large values that exceed many providers' limits.
 
   // temperature & top_p

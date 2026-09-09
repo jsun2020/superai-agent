@@ -53,22 +53,51 @@ export function resolveUpstreamUrl(baseUrl: string, path: string): string {
   return base + path
 }
 
+export type UpstreamTimeouts = {
+  /** Abort if the response headers have not arrived by then. */
+  headersTimeoutMs: number
+  /**
+   * Abort the whole exchange, body included, by then. Omit for streaming:
+   * an LLM stream legitimately runs for minutes, and cutting it mid-body
+   * hands the CLI a truncated answer - the CLI has its own idle watchdog
+   * for a stream that stalls.
+   */
+  totalTimeoutMs?: number
+}
+
 export async function fetchUpstream(
   url: string,
   jsonBody: unknown,
   creds: UpstreamCredentials,
-  options: { timeoutMs: number },
+  options: UpstreamTimeouts,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<Response> {
-  const attempt = async () =>
-    fetch(url, {
-      method: 'POST',
-      headers: await buildUpstreamHeaders(creds),
-      body: JSON.stringify(jsonBody),
-      signal: AbortSignal.timeout(options.timeoutMs),
-      // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
-      // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
-      ...getTLSFetchOptions(),
-    })
+  const attempt = async () => {
+    const controller = new AbortController()
+    const timeoutError = () => new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    const headersTimer = setTimeout(() => controller.abort(timeoutError()), options.headersTimeoutMs)
+    let response: Response
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: await buildUpstreamHeaders(creds),
+        body: JSON.stringify(jsonBody),
+        signal: controller.signal,
+        // Same TLS trust as the CLI: OS certificate store (corporate TLS-inspecting
+        // proxies) + NODE_EXTRA_CA_CERTS. HTTPS_PROXY/NO_PROXY stay with Bun's env handling.
+        ...getTLSFetchOptions(),
+      })
+    } finally {
+      clearTimeout(headersTimer)
+    }
+    if (options.totalTimeoutMs !== undefined) {
+      // Headers are in; the remaining budget bounds the body. Aborting an
+      // already-consumed body is a no-op, so the timer needs no bookkeeping.
+      const t = setTimeout(() => controller.abort(timeoutError()), options.totalTimeoutMs)
+      ;(t as unknown as { unref?: () => void }).unref?.()
+    }
+    return response
+  }
 
   let response = await attempt()
   if (response.status === 401 && creds.auth?.type === 'oauth2_client_credentials') {
