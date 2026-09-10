@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "SuperAI Agent",
+  "description": "SuperAI Agent in Chrome: debug web pages with the agent in the side panel. Console errors, failed requests and the element you right-clicked travel with your message.",
+  "version": "0.2.35",
+  "minimum_chrome_version": "116",
+  "action": {
+    "default_title": "Open SuperAI Agent"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "tabs",
+    "storage",
+    "webRequest",
+    "webNavigation",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

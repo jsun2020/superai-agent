@@ -13,6 +13,14 @@ describe('corsHeaders', () => {
     expect(corsHeaders('tauri://localhost')['Access-Control-Allow-Origin']).toBe('tauri://localhost')
   })
 
+  it('allows the SuperAI Agent Chrome extension origin, but only a well-formed one', () => {
+    const id = 'abcdefghijklmnopabcdefghijklmnop' // 32 letters a-p, as Chrome mints them
+    expect(corsHeaders(`chrome-extension://${id}`)['Access-Control-Allow-Origin']).toBe(`chrome-extension://${id}`)
+    // Wrong length / characters are not extension ids and get the fallback.
+    expect(corsHeaders('chrome-extension://short')['Access-Control-Allow-Origin']).toBe('http://localhost:3000')
+    expect(corsHeaders('chrome-extension://abcdefghijklmnopabcdefghijklmnoz')['Access-Control-Allow-Origin']).toBe('http://localhost:3000')
+  })
+
   it('falls back for unknown origins', () => {
     expect(corsHeaders('https://example.com')['Access-Control-Allow-Origin']).toBe('http://localhost:3000')
     expect(corsHeaders(null)['Access-Control-Allow-Origin']).toBe('http://localhost:3000')
